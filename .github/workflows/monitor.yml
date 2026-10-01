@@ -2,15 +2,23 @@ name: LET Low-Price Monitor
 
 on:
   schedule:
-    # 每 4 小时。GitHub 的 cron 是 UTC —— 00/04/08/12/16/20 UTC
-    # 正好等于北京时间 08/12/16/20/00/04 点。
-    - cron: '0 0,4,8,12,16,20 * * *'
+    # GitHub Actions 的 cron 不支持变量，必须写死。这里只决定「唤醒频率」，
+    # 实际推送间隔由 INTERVAL_MINUTES 控制（默认 30 分钟）。
+    #
+    # 间隔 < 60 分钟时用这个（每 30 分钟唤醒一次）：
+    - cron: '*/30 * * * *'
+    # 间隔为整小时时改用这个（每 4 小时）：
+    # - cron: '0 0,4,8,12,16,20 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
         description: '只抓取并预览，不发信、不改状态'
         type: boolean
         default: false
+      force:
+        description: '忽略时间间隔，立即执行'
+        type: boolean
+        default: true
 
 concurrency:
   group: let-monitor
@@ -32,8 +40,8 @@ jobs:
       - name: Install deps
         run: pip install -r requirements.txt
 
-      # 已推送的 URL 存在 cache 里。key 每次运行都不同（带 run_id），
-      # 靠 restore-keys 前缀命中上一次的缓存，实现跨运行累积。
+      # 已推送的 URL 与上次运行时间存在 cache 里。key 每次运行都不同
+      # （带 run_id），靠 restore-keys 前缀命中上一次的缓存，实现跨运行累积。
       - name: Restore state
         uses: actions/cache/restore@v4
         with:
@@ -44,14 +52,19 @@ jobs:
 
       - name: Run monitor
         env:
-          LITELLM_TOKEN: ${{ secrets.LITELLM_TOKEN }}
-          LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL || 'https://litellm.portcloud.online' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://litellm.portcloud.online/v1' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'cc/deepseek-v4.1-flash' }}
+          INTERVAL_MINUTES: ${{ vars.INTERVAL_MINUTES || '30' }}
           SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.qq.com' }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: python src/monitor.py ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          python src/monitor.py \
+            ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.force && '--force' || '' }}
 
       # dry-run 不写状态，因此也不保存，避免覆盖已有的状态缓存。
       - name: Save state

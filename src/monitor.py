@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """LowEndTalk 低价 VPS 监控。
 
-抓取 LET 的 Offers 板块 → AI 分类与中文摘要 → 按价格规则筛选 →
-去重后把新增条目邮件推送。
+抓取 LET 的 Offers 板块 → AI 打标签并生成中文摘要 → 去重后邮件推送新增条目。
+
+后端通过环境变量配置，任何兼容 OpenAI /v1/chat/completions 的服务都可以用。
 """
 
 from __future__ import annotations
@@ -24,37 +25,40 @@ import requests
 
 # ---------------------------------------------------------------- 配置
 
-FEED_URL = "https://lowendtalk.com/categories/offers/feed.rss"
-# LET 前面挡着 Cloudflare，直连会被 403，走这个转换服务拿 JSON Feed
-FEED_PROXY = "https://feed2json.org/convert?url={url}"
+FEED_URL = os.environ.get(
+    "FEED_URL", "https://lowendtalk.com/categories/offers/feed.rss"
+)
+# LET 前面挡着 Cloudflare，直连会 403，走这个转换服务拿 JSON Feed。
+# 换用其他站点时，若源站可直接访问，把 FEED_PROXY 设为 "{url}" 即可。
+FEED_PROXY = os.environ.get("FEED_PROXY", "https://feed2json.org/convert?url={url}")
 
-MODEL_WANT = "deepseek-v4.1-flash"
-# 网关会同时挂出 cc/ wb/ ve/ 等多个同名模型，优先用 cc/ 通道
-MODEL_PREFERRED_PREFIX = "cc/"
+# 兼容 OpenAI 格式的后端
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "300"))
 
-# 价格规则：VPS 折合年费 ≤ $15，独立服务器折合月费 ≤ $50
-RULES = {
-    "vps": {"basis": "year", "limit": 15},
-    "dedi": {"basis": "month", "limit": 50},
-}
-# 各计费周期折算到比较基准的系数
-TO_BASIS = {
-    "year": {"month": 12, "quarter": 4, "year": 1},
-    "month": {"month": 1, "quarter": 1 / 3, "year": 1 / 12},
-}
+LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
+MAX_POSTS = int(os.environ.get("MAX_POSTS", "60"))
 
-LOOKBACK_DAYS = 7
-MAX_POSTS = 60          # 单次送进 AI 的条数上限，约束首次运行的规模
+# 实际推送间隔（分钟）。工作流被唤醒得比这更频繁时，脚本会跳过，
+# 避免重复抓取与浪费调用。手动触发（--force）不受此限制。
+INTERVAL_MINUTES = int(os.environ.get("INTERVAL_MINUTES", "30"))
+
+# 只推送带服务器类型标签的条目。Offers 板块里混着 SSL 证书、
+# 控制面板、IP 租赁等非服务器内容，置为 false 可一并推送。
+REQUIRE_SERVER_TAG = os.environ.get("REQUIRE_SERVER_TAG", "true").lower() not in (
+    "0", "false", "no",
+)
+
 # 状态与预览分开存放：状态进 Actions cache，预览只作为 artifact 上传。
-STATE_PATH = Path(".state/sent.json")
-PREVIEW_PATH = Path("preview.html")
-STATE_MAX = 5000        # 状态文件里保留的 URL 上限
+STATE_PATH = Path(os.environ.get("STATE_PATH", ".state/sent.json"))
+PREVIEW_PATH = Path(os.environ.get("PREVIEW_PATH", "preview.html"))
+STATE_MAX = 5000
+
 UA = "lowendtalk-lowprice-monitor/1.0 (+https://github.com/samoyed24)"
+TZ_OFFSET = timezone(timedelta(hours=8))
 
-TZ = "Asia/Shanghai"
-
-LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "https://litellm.portcloud.online")
-LITELLM_TOKEN = os.environ.get("LITELLM_TOKEN", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.qq.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
@@ -62,6 +66,7 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "")
 MAIL_TO = os.environ.get("MAIL_TO", "")
 
 DRY_RUN = "--dry-run" in sys.argv
+FORCE = "--force" in sys.argv
 
 
 def log(msg: str) -> None:
@@ -137,9 +142,6 @@ def fetch_feed() -> dict:
 
 def parse_posts(feed: dict) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-    price_re = re.compile(
-        r"(?:US)?\$\s?\d+(?:[.,]\d+)?(?:\s?/\s?(?:mo|month|yr|year|quarter|qtr))?", re.I
-    )
     posts = []
     for item in feed["items"]:
         url = item.get("url") or item.get("external_url") or item.get("id") or ""
@@ -168,7 +170,6 @@ def parse_posts(feed: dict) -> list[dict]:
             "author": (item.get("author") or {}).get("name", ""),
             "date": raw_date,
             "body": body,
-            "prices": " / ".join(dict.fromkeys(price_re.findall(body)))[:120],
         })
 
     posts.sort(key=lambda p: p["date"], reverse=True)
@@ -177,160 +178,150 @@ def parse_posts(feed: dict) -> list[dict]:
 
 # ---------------------------------------------------------------- AI
 
-def litellm_headers() -> dict:
-    return {
-        "x-api-key": LITELLM_TOKEN,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-        "User-Agent": UA,
-    }
-
-
-def resolve_model() -> str:
-    """从 /v1/models 解析出当前可用的模型 id。
-
-    网关侧模型命名会变动，且同名模型可能挂在多个通道下，因此不硬编码。
-    """
-    r = requests.get(f"{LITELLM_BASE_URL}/v1/models", headers=litellm_headers(), timeout=60)
-    r.raise_for_status()
-    ids = [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
-
-    for cand in (
-        MODEL_PREFERRED_PREFIX + MODEL_WANT,
-        MODEL_WANT,
-    ):
-        if cand in ids:
-            log(f"模型: {cand}")
-            return cand
-    suffix = [i for i in ids if i.endswith("/" + MODEL_WANT)]
-    if suffix:
-        log(f"模型: {suffix[0]}（后缀匹配）")
-        return suffix[0]
-    raise RuntimeError(f"网关没有 {MODEL_WANT}；可用: {', '.join(sorted(ids))[:400]}")
-
-
 SYSTEM_PROMPT = "\n".join([
-    "你是 VPS / 独立服务器优惠分析师。用户只关心超低价机器。",
-    "判定规则（严格执行）：",
-    "1. kind：vps = VPS/虚拟服务器/KVM/OpenVZ/LXC/云主机；"
-    "dedi = 独立服务器/裸金属/整机租用；"
-    "other = 其他（虚拟主机、代理IP、软件许可证、机柜托管、域名/SSL、CDN、游戏服、邮箱托管等）。",
-    "2. price / period：提取该帖子促销的【最低价档】。"
-    "period 只能是 month | year | quarter | one-time | unknown。price 只填数字，无法确定填 null。",
-    "3. zh：中文摘要，40 字以内，说清「什么机器 + 什么配置 + 什么价位」。",
-    "4. 只输出 JSON 数组，不要解释文字，不要 markdown 代码块。",
-    '格式：[{"i":序号,"kind":"vps|dedi|other","price":数字或null,"period":"...","zh":"..."}]',
+    "你是 VPS / 服务器优惠分析师。对每一条帖子打标签并写中文摘要。",
+    "",
+    "tags：从下列取值中选出所有适用的，可以多选，也可以为空数组。",
+    "  类型（最多选一个）：vps、vds、独服、存储服",
+    "  网络（可多选）：ipv4、ipv6、家宽、回国优化、CN2、GIA、BGP、Anycast、大带宽、不限流量",
+    "  其他（可多选）：高防、KVM、OpenVZ、LXC、Windows、GPU、独立IP、免费试用、抽奖",
+    "",
+    "  · vps = 虚拟服务器；vds = 独享资源的虚拟服务器",
+    "  · 独服 = 独立服务器 / 裸金属 / 整机租用",
+    "  · 存储服 = 主打大容量存储的机型",
+    "  · 家宽 = 住宅宽带 IP；回国优化 = 面向中国大陆优化的线路",
+    "  · 注意 \"1 Dedicated IPv4\"、\"dedicated port\"、\"dedicated resources\" 说的是 VPS 的配置，",
+    "    不是独立服务器。只有整机租用才算「独服」。",
+    "",
+    "prices：列出帖子里出现的所有价格档，按从低到高排序，最多 5 条。",
+    "  · amount 只填数字；currency 填 USD / EUR / CNY 等，不确定填 null",
+    "  · period 只能是 month | year | quarter | half-year | one-time | unknown",
+    "",
+    "zh：中文摘要，40 字以内，说清「什么机器 + 什么配置 + 什么价位」。",
+    "",
+    "只输出 JSON 数组，不要解释文字，不要 markdown 代码块。",
+    '格式：[{"i":序号,"tags":["..."],"prices":[{"amount":数字,"currency":"USD","period":"month"}],"zh":"..."}]',
 ])
 
 
-def classify(posts: list[dict], model: str) -> list[dict]:
-    payload = [
-        {"i": i, "title": p["title"][:200], "body": p["body"][:700]}
-        for i, p in enumerate(posts)
-    ]
+def llm_chat(messages: list[dict], *, max_tokens: int = 8000) -> str:
+    """调用兼容 OpenAI 格式的 /v1/chat/completions。"""
+    url = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
     body = {
-        "model": model,
-        "max_tokens": 8000,
+        "model": LLM_MODEL,
+        "max_tokens": max_tokens,
         "temperature": 0,
-        "system": SYSTEM_PROMPT,
-        "messages": [{
-            "role": "user",
-            "content": "分析以下 LowEndTalk Offers 帖子：\n" + json.dumps(payload, ensure_ascii=False),
-        }],
+        "messages": messages,
+    }
+    headers = {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": UA,
     }
 
     last = None
     for attempt in range(1, 4):
         try:
-            r = requests.post(
-                f"{LITELLM_BASE_URL}/v1/messages",
-                headers=litellm_headers(),
-                json=body,
-                timeout=300,
-            )
+            r = requests.post(url, headers=headers, json=body, timeout=LLM_TIMEOUT)
             if r.status_code >= 400:
                 raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
             data = r.json()
-            text = "".join(c.get("text", "") for c in data.get("content", []))
-            m = re.search(r"\[[\s\S]*\]", text)
-            if not m:
-                raise RuntimeError(f"响应里没有 JSON 数组: {text[:200]}")
-            verdicts = json.loads(m.group(0))
-            log(f"AI 判定 {len(verdicts)} 条（{data.get('usage', {})}）")
-            return verdicts
+            return data["choices"][0]["message"]["content"]
         except Exception as exc:  # noqa: BLE001
             last = exc
-            log(f"  AI 调用失败 ({attempt}/3): {type(exc).__name__}: {str(exc)[:200]}")
+            log(f"  LLM 调用失败 ({attempt}/3): {type(exc).__name__}: {str(exc)[:200]}")
             if attempt < 3:
                 time.sleep(5 * attempt)
+    raise RuntimeError(f"LLM 调用失败: {last}")
 
-    raise RuntimeError(f"AI 分类失败: {last}")
+
+def classify(posts: list[dict]) -> list[dict]:
+    payload = [
+        {"i": i, "title": p["title"][:200], "body": p["body"][:700]}
+        for i, p in enumerate(posts)
+    ]
+    text = llm_chat([
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "分析以下帖子：\n" + json.dumps(payload, ensure_ascii=False)},
+    ])
+    m = re.search(r"\[[\s\S]*\]", text)
+    if not m:
+        raise RuntimeError(f"响应里没有 JSON 数组: {text[:300]}")
+    verdicts = json.loads(m.group(0))
+    log(f"AI 打了 {len(verdicts)} 条的标签")
+    return verdicts
 
 
-# ---------------------------------------------------------------- 规则
+# ---------------------------------------------------------------- 整理
 
-def apply_rules(verdicts: list[dict], posts: list[dict]) -> list[dict]:
-    kept = []
+TYPE_TAGS = ("vps", "vds", "独服", "存储服")
+TYPE_COLOR = {"vps": "#1a56db", "vds": "#7c3aed", "独服": "#9a3412", "存储服": "#0f766e"}
+TAG_COLOR = "#6b7280"
+
+PERIOD_ZH = {
+    "month": "/月", "year": "/年", "quarter": "/季",
+    "half-year": "/半年", "one-time": " 一次性", "unknown": "",
+}
+# 折算到月，用于排序；周期未知的不参与排序
+TO_MONTH = {"month": 1, "quarter": 1 / 3, "half-year": 1 / 6, "year": 1 / 12}
+
+
+def normalize_prices(raw) -> list[dict]:
+    """规整 AI 返回的价格档，丢弃读不出金额的。"""
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        try:
+            amount = float(p.get("amount"))
+        except (TypeError, ValueError):
+            continue
+        if amount <= 0:
+            continue
+        period = str(p.get("period") or "unknown").lower()
+        currency = p.get("currency")
+        out.append({
+            "amount": amount,
+            "currency": (str(currency).upper() if currency else ""),
+            "period": period,
+        })
+    out.sort(key=lambda x: x["amount"])
+    return out[:5]
+
+
+def merge(verdicts: list[dict], posts: list[dict]) -> list[dict]:
+    items = []
     for v in verdicts:
         idx = v.get("i")
         if not isinstance(idx, int) or not (0 <= idx < len(posts)):
             continue
-        post = posts[idx]
-        kind = str(v.get("kind") or "other").lower()
-        period = str(v.get("period") or "unknown").lower()
-        price = v.get("price")
-        try:
-            price = float(price) if price is not None else None
-        except (TypeError, ValueError):
-            price = None
-
-        rule = RULES.get(kind)
-        basis_val = None
-        unknown = False
-        period_unknown = False
-        cmp_text = ""
-
-        if kind == "other" or not rule:
+        tags = [str(t).strip() for t in (v.get("tags") or []) if str(t).strip()]
+        if REQUIRE_SERVER_TAG and not any(t in TYPE_TAGS for t in tags):
             continue
-        conv = TO_BASIS[rule["basis"]].get(period)
-        if price is None:
-            unknown = True          # 完全读不出价格 —— 保留但标注
-            cmp_text = "价格待确认"
-        elif conv is None:
-            # 价格读到了但周期读不出，无法折算，同样保留待人工确认
-            period_unknown = True
-            cmp_text = f"${price:g}（周期未知）"
-        else:
-            basis_val = price * conv
-            unit = "年" if rule["basis"] == "year" else "月"
-            cmp_text = f"${basis_val:g}/{unit}"
-            if basis_val > rule["limit"]:
-                continue
-
-        kept.append({
-            **post,
-            "kind": kind,
-            "price": price,
-            "period": period,
-            "basisVal": basis_val,
-            "unknown": unknown or period_unknown,
-            "cmpText": cmp_text,
-            "priceText": "" if price is None else f"${price:g}" + {
-                "month": "/月", "year": "/年", "quarter": "/季", "one-time": " 一次性",
-            }.get(period, ""),
+        items.append({
+            **posts[idx],
+            "tags": tags,
+            "prices": normalize_prices(v.get("prices")),
             "zh": str(v.get("zh") or ""),
         })
 
-    # 有价的按价格升序，价格待确认的排后面按时间倒序
-    kept.sort(key=lambda x: (x["unknown"], x["basisVal"] if x["basisVal"] is not None else 0))
-    log(f"规则筛选后保留 {len(kept)} 条")
-    return kept
+    # 按最低月均价排序，价格未知的排后面
+    def sort_key(x):
+        monthly = [
+            p["amount"] * TO_MONTH[p["period"]]
+            for p in x["prices"] if p["period"] in TO_MONTH
+        ]
+        return (0, min(monthly)) if monthly else (1, 0)
+
+    items.sort(key=sort_key)
+    log(f"整理出 {len(items)} 条")
+    return items
 
 
 # ---------------------------------------------------------------- 输出
 
-LABEL = {"vps": "VPS", "dedi": "独服", "other": "其他"}
-COLOR = {"vps": "#1a56db", "dedi": "#9a3412", "other": "#6b7280"}
 
 
 def fmt_date(raw: str) -> str:
@@ -338,9 +329,14 @@ def fmt_date(raw: str) -> str:
         return ""
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return dt.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+        return dt.astimezone(TZ_OFFSET).strftime("%Y-%m-%d %H:%M")
     except ValueError:
         return raw[:16]
+
+
+def price_text(p: dict) -> str:
+    cur = {"USD": "$", "EUR": "€", "CNY": "¥"}.get(p["currency"], p["currency"] + " " if p["currency"] else "$")
+    return f"{cur}{p['amount']:g}{PERIOD_ZH.get(p['period'], '')}"
 
 
 def build_digest(items: list[dict]) -> tuple[str, str]:
@@ -349,18 +345,32 @@ def build_digest(items: list[dict]) -> tuple[str, str]:
 
     rows = []
     for x in items:
-        if x["unknown"]:
-            price_html = '<span style="color:#b45309;font-weight:700">价格待确认</span>'
-        else:
-            price_html = f'<span style="color:#0a7d32;font-weight:700">{esc(x["cmpText"])}</span>'
-            if x["priceText"] and x["priceText"] != x["cmpText"]:
-                price_html += f' <span style="color:#9ca3af">（原报价 {esc(x["priceText"])}）</span>'
+        type_tag = next((t for t in x["tags"] if t in TYPE_TAGS), None)
+        others = [t for t in x["tags"] if t not in TYPE_TAGS]
+
+        badges = []
+        if type_tag:
+            badges.append(
+                f'<span style="display:inline-block;font-size:11px;font-weight:700;color:#fff;'
+                f'background:{TYPE_COLOR[type_tag]};border-radius:3px;padding:1px 6px;'
+                f'margin-right:6px;vertical-align:1px">{esc(type_tag)}</span>'
+            )
+        badges.extend(
+            f'<span style="display:inline-block;font-size:11px;color:{TAG_COLOR};'
+            f'border:1px solid #d1d5db;border-radius:3px;padding:0 5px;'
+            f'margin-right:4px;vertical-align:1px">{esc(t)}</span>'
+            for t in others
+        )
+
+        price_html = (
+            '<span style="color:#0a7d32;font-weight:700">'
+            + esc(" / ".join(price_text(p) for p in x["prices"]))
+            + "</span>"
+        ) if x["prices"] else '<span style="color:#9ca3af">未列价格</span>'
+
         rows.append(f"""
   <div style="padding:13px 0;border-bottom:1px solid #ececec">
-    <div style="margin-bottom:5px">
-      <span style="display:inline-block;font-size:11px;font-weight:700;color:#fff;
-                   background:{COLOR.get(x['kind'], '#666')};border-radius:3px;
-                   padding:1px 6px;margin-right:7px;vertical-align:1px">{LABEL.get(x['kind'], x['kind'])}</span>
+    <div style="margin-bottom:5px">{''.join(badges)}
       <a href="{esc(x['postUrl'])}" style="font-size:15px;font-weight:600;color:#1a56db;
          text-decoration:none">{esc(x['title'])}</a>
     </div>
@@ -370,17 +380,21 @@ def build_digest(items: list[dict]) -> tuple[str, str]:
     <div style="font-size:13px;color:#333;line-height:1.55">{esc(x['zh'])}</div>
   </div>""")
 
-    n_vps = sum(1 for x in items if x["kind"] == "vps")
-    n_dedi = sum(1 for x in items if x["kind"] == "dedi")
-    now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    counts: dict[str, int] = {}
+    for x in items:
+        for t in x["tags"]:
+            if t in TYPE_TAGS:
+                counts[t] = counts.get(t, 0) + 1
+    summary = " · ".join(f"{k} {v}" for k, v in counts.items())
+    now = datetime.now(TZ_OFFSET).strftime("%Y-%m-%d %H:%M")
 
-    doc = f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;max-width:700px">
+    doc = f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;max-width:720px">
   <h2 style="margin:0 0 5px;font-size:19px">LowEndTalk 低价 VPS 汇总</h2>
   <div style="color:#8a8a8a;font-size:12px;margin-bottom:4px">
-    新增 <b>{len(items)}</b> 条（VPS {n_vps} · 独服 {n_dedi}） · 抓取时间 {now}
+    新增 <b>{len(items)}</b> 条{f'（{summary}）' if summary else ''} · 抓取时间 {now}
   </div>
   <div style="color:#b0b0b0;font-size:11px;margin-bottom:16px">
-    筛选规则：VPS 折合年费 ≤ $15 ／ 独立服务器折合月费 ≤ $50 · AI 判定分类与中文摘要
+    标签由 AI 判定，价格为帖子中出现的档位（从低到高）
   </div>
   {''.join(rows)}
   <div style="margin-top:18px;font-size:11px;color:#b0b0b0">
@@ -388,8 +402,7 @@ def build_digest(items: list[dict]) -> tuple[str, str]:
   </div>
 </div>"""
 
-    subject = (f"[LET] 低价VPS {len(items)} 条 · VPS {n_vps} / 独服 {n_dedi} · "
-               f"{datetime.now(timezone(timedelta(hours=8))):%Y-%m-%d}")
+    subject = f"[LET] 低价VPS {len(items)} 条 · {now[:10]}"
     return subject, doc
 
 
@@ -411,17 +424,17 @@ def send_mail(subject: str, html_body: str) -> None:
 
 
 def send_alert(error: str) -> None:
-    """失败时告警。刻意用不同主题，方便邮箱里一眼区分。"""
+    """失败时告警。主题刻意区分，方便在邮箱里一眼认出。"""
     try:
         send_mail(
             "🚨 LET 监控运行失败",
             f"""<div style="font-family:monospace;font-size:13px">
   <p><b>LowEndTalk 监控本次运行失败</b></p>
   <p style="color:#b91c1c;white-space:pre-wrap">{html.escape(error[:2000])}</p>
-  <p style="color:#6b7280">时间：{datetime.now(timezone(timedelta(hours=8))):%Y-%m-%d %H:%M} (CST)</p>
+  <p style="color:#6b7280">时间：{datetime.now(TZ_OFFSET):%Y-%m-%d %H:%M} (CST)</p>
 </div>""",
         )
-    except Exception as exc:  # noqa: BLE001 - 告警本身失败不应掩盖原始错误
+    except Exception as exc:  # noqa: BLE001 - 告警失败不应掩盖原始错误
         log(f"告警邮件也发不出去: {exc}")
 
 
@@ -445,18 +458,39 @@ def save_state(state: dict) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps({
         "sent": sent,
+        "lastRun": datetime.now(timezone.utc).isoformat(),
         "updated": datetime.now(timezone.utc).isoformat(),
     }, ensure_ascii=False))
     log(f"状态已保存（累计 {len(sent)} 条已推送）")
 
 
+def due_since_last_run(state: dict) -> bool:
+    """距离上次运行是否已达到 INTERVAL_MINUTES。"""
+    if FORCE or DRY_RUN or INTERVAL_MINUTES <= 0:
+        return True
+    last = state.get("lastRun")
+    if not last:
+        return True
+    try:
+        prev = datetime.fromisoformat(last)
+    except ValueError:
+        return True
+    elapsed = (datetime.now(timezone.utc) - prev).total_seconds() / 60
+    if elapsed < INTERVAL_MINUTES:
+        log(f"距上次运行仅 {elapsed:.0f} 分钟，未达 {INTERVAL_MINUTES} 分钟间隔，跳过")
+        return False
+    return True
+
+
 # ---------------------------------------------------------------- 主流程
 
 def run() -> int:
-    if not LITELLM_TOKEN:
-        raise RuntimeError("缺少 LITELLM_TOKEN")
+    if not LLM_API_KEY:
+        raise RuntimeError("缺少 LLM_API_KEY")
 
     state = load_state()
+    if not due_since_last_run(state):
+        return 0
     seen = set(state["sent"])
 
     posts = parse_posts(fetch_feed())
@@ -465,20 +499,16 @@ def run() -> int:
     if not new:
         return 0
 
-    model = resolve_model()
-    verdicts = classify(new, model)
-    if not verdicts:
-        raise RuntimeError(f"有 {len(new)} 条待分类但 AI 没给出任何判定")
-    kept = apply_rules(verdicts, new)
+    items = merge(classify(new), new)
 
     if DRY_RUN:
-        subject, doc = build_digest(kept) if kept else ("(无匹配)", "<p>无匹配条目</p>")
+        subject, doc = build_digest(items) if items else ("(无内容)", "<p>无内容</p>")
         PREVIEW_PATH.write_text(doc)
         log(f"[dry-run] 主题: {subject}；预览写入 {PREVIEW_PATH}；不改状态、不发信")
         return 0
 
-    if kept:
-        subject, doc = build_digest(kept)
+    if items:
+        subject, doc = build_digest(items)
         send_mail(subject, doc)
 
     # 投递成功后才记状态 —— 失败时这些帖子下次还会被处理，不会丢
