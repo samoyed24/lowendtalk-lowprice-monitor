@@ -50,7 +50,10 @@ TO_BASIS = {
 
 LOOKBACK_DAYS = 7
 MAX_POSTS = 60          # 单次送进 AI 的条数上限，约束首次运行的规模
-STATE_PATH = Path(".cache/sent.json")
+# 状态单独放一个目录，和预览文件分开 —— 预览不该进状态缓存，
+# 否则 dry-run 会覆盖掉真实状态，导致下次把窗口内帖子全部重发。
+STATE_PATH = Path(".state/sent.json")
+PREVIEW_PATH = Path("preview.html")
 STATE_MAX = 5000        # 状态文件里保留的 URL 上限
 UA = "lowendtalk-lowprice-monitor/1.0 (+https://github.com/samoyed24)"
 
@@ -432,7 +435,8 @@ def send_alert(error: str) -> None:
 # ---------------------------------------------------------------- 状态
 
 def load_state() -> dict:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # 刻意不建目录：dry-run 应当完全没有副作用，
+    # 目录只在真正要写状态时才创建（见 save_state）。
     if STATE_PATH.exists():
         try:
             data = json.loads(STATE_PATH.read_text())
@@ -476,8 +480,8 @@ def run() -> int:
 
     if DRY_RUN:
         subject, doc = build_digest(kept) if kept else ("(无匹配)", "<p>无匹配条目</p>")
-        Path(".cache/preview.html").write_text(doc)
-        log(f"[dry-run] 主题: {subject}；预览写入 .cache/preview.html；不改状态、不发信")
+        PREVIEW_PATH.write_text(doc)
+        log(f"[dry-run] 主题: {subject}；预览写入 {PREVIEW_PATH}；不改状态、不发信")
         return 0
 
     if kept:

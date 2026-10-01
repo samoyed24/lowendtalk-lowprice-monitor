@@ -1,4 +1,5 @@
-.cache/
+.state/
+preview.html
 __pycache__/
 *.pyc
 .venv/
