@@ -32,10 +32,14 @@ FEED_URL = os.environ.get(
 # 换用其他站点时，若源站可直接访问，把 FEED_PROXY 设为 "{url}" 即可。
 FEED_PROXY = os.environ.get("FEED_PROXY", "https://feed2json.org/convert?url={url}")
 
-# 兼容 OpenAI 格式的后端
+# 兼容的三种接口格式：
+#   chat_completions  OpenAI /v1/chat/completions（默认）
+#   responses         OpenAI /v1/responses
+#   anthropic         Anthropic /v1/messages
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+LLM_API_FORMAT = os.environ.get("LLM_API_FORMAT", "chat_completions").strip().lower()
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "300"))
 
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
@@ -204,29 +208,15 @@ SYSTEM_PROMPT = "\n".join([
 ])
 
 
-def llm_chat(messages: list[dict], *, max_tokens: int = 8000) -> str:
-    """调用兼容 OpenAI 格式的 /v1/chat/completions。"""
-    url = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
-    body = {
-        "model": LLM_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0,
-        "messages": messages,
-    }
-    headers = {
-        "Authorization": f"Bearer {LLM_API_KEY}",
-        "Content-Type": "application/json",
-        "User-Agent": UA,
-    }
-
+def _post(path: str, payload: dict, headers: dict) -> dict:
+    url = f"{LLM_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
     last = None
     for attempt in range(1, 4):
         try:
-            r = requests.post(url, headers=headers, json=body, timeout=LLM_TIMEOUT)
+            r = requests.post(url, headers=headers, json=payload, timeout=LLM_TIMEOUT)
             if r.status_code >= 400:
                 raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
-            data = r.json()
-            return data["choices"][0]["message"]["content"]
+            return r.json()
         except Exception as exc:  # noqa: BLE001
             last = exc
             log(f"  LLM 调用失败 ({attempt}/3): {type(exc).__name__}: {str(exc)[:200]}")
@@ -235,15 +225,87 @@ def llm_chat(messages: list[dict], *, max_tokens: int = 8000) -> str:
     raise RuntimeError(f"LLM 调用失败: {last}")
 
 
+def _extract_chat_completions(data: dict) -> str:
+    return data["choices"][0]["message"]["content"] or ""
+
+
+def _extract_responses(data: dict) -> str:
+    """Responses API 的 output 里混着 reasoning 与 message，只取 message 的文本。"""
+    if data.get("error"):
+        raise RuntimeError(f"响应报错: {json.dumps(data['error'], ensure_ascii=False)[:300]}")
+    parts = []
+    for item in data.get("output") or []:
+        if item.get("type") != "message":
+            continue
+        for c in item.get("content") or []:
+            if c.get("type") in ("output_text", "text") and c.get("text"):
+                parts.append(c["text"])
+    text = "".join(parts)
+    if not text:
+        raise RuntimeError(f"响应里没有文本: {json.dumps(data, ensure_ascii=False)[:300]}")
+    return text
+
+
+def _extract_anthropic(data: dict) -> str:
+    return "".join(c.get("text", "") for c in data.get("content", []))
+
+
+def llm_chat(system: str, user: str, *, max_tokens: int = 8000) -> str:
+    """按 LLM_API_FORMAT 指定的格式调用后端。"""
+    if LLM_API_FORMAT == "responses":
+        data = _post("responses", {
+            "model": LLM_MODEL,
+            "instructions": system,
+            "input": user,
+            "max_output_tokens": max_tokens,
+        }, {
+            "Authorization": f"Bearer {LLM_API_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": UA,
+        })
+        return _extract_responses(data)
+
+    if LLM_API_FORMAT == "anthropic":
+        data = _post("messages", {
+            "model": LLM_MODEL,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }, {
+            "x-api-key": LLM_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+            "User-Agent": UA,
+        })
+        return _extract_anthropic(data)
+
+    # 默认：OpenAI chat completions
+    data = _post("chat/completions", {
+        "model": LLM_MODEL,
+        "max_tokens": max_tokens,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }, {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": UA,
+    })
+    return _extract_chat_completions(data)
+
+
 def classify(posts: list[dict]) -> list[dict]:
     payload = [
         {"i": i, "title": p["title"][:200], "body": p["body"][:700]}
         for i, p in enumerate(posts)
     ]
-    text = llm_chat([
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": "分析以下帖子：\n" + json.dumps(payload, ensure_ascii=False)},
-    ])
+    text = llm_chat(
+        SYSTEM_PROMPT,
+        "分析以下帖子：\n" + json.dumps(payload, ensure_ascii=False),
+    )
     m = re.search(r"\[[\s\S]*\]", text)
     if not m:
         raise RuntimeError(f"响应里没有 JSON 数组: {text[:300]}")
@@ -390,15 +452,12 @@ def build_digest(items: list[dict]) -> tuple[str, str]:
 
     doc = f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;max-width:720px">
   <h2 style="margin:0 0 5px;font-size:19px">LowEndTalk 低价 VPS 汇总</h2>
-  <div style="color:#8a8a8a;font-size:12px;margin-bottom:4px">
+  <div style="color:#8a8a8a;font-size:12px;margin-bottom:16px">
     新增 <b>{len(items)}</b> 条{f'（{summary}）' if summary else ''} · 抓取时间 {now}
-  </div>
-  <div style="color:#b0b0b0;font-size:11px;margin-bottom:16px">
-    标签由 AI 判定，价格为帖子中出现的档位（从低到高）
   </div>
   {''.join(rows)}
   <div style="margin-top:18px;font-size:11px;color:#b0b0b0">
-    来源 LowEndTalk › Offers 板块 · 每 4 小时自动抓取去重
+    来源 LowEndTalk › Offers 板块
   </div>
 </div>"""
 

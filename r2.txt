@@ -1,0 +1,58 @@
+data: {"type":"response.created","response":{"id":"resp_VsuVNGayEIAGFRrhq-4foXgIZ9fvcTs97JNgQKssvvWuFJhnmYzV4S2z5vOaO0Snb50Ib1GCSb_qxUkMN-woF33zeYUu8_pkFqqF0T0_LJbEoJjuLlPQtnlaj-XkPfJqCo3MRDzxO0yZCbpE_wuCCIPuJ9kzArIkHFMXLk5rfgbuh3sT37vzfAcvNFN105OZlgcQNkUR8fsc-JzMhtqoIseJgkPy7M7SPMpGdpGy-TY_2FUQyAmzt-zJE8yOOjkoq9GSO972USWltUmOHoCbGziB9wM8OOvI6I4dUSrNPWr5Znzij4opgkdG0TEL-SxfEQvH5OPhYUGcQnyE2j6gCwUm1UI_1fYxg6mGEGhRP5TNqzJu9KqyPP5tDPsUfFbu4EP4VmqsFylvfQUdWyLMTkehZFdT0kRuT8B8OXfqBvaHzLf453KxVC63xGVxck8SIhJ6ENsL66iOqANYRZ5fRMWt0PPHdaEyRtkOOgGgD_y9HJ0UGphYH1gQA9psJe7oA5TirKl0uNNUBVGKTM1n9atwpAZykiVd3bbznt4CeVujB05Gsr7gAaXoKZr04Ym_LeQVw_xkKIUhGv0JmonT5HLc3tEtZoWRLCiWigvcglytxhqwfQW4aQuyyqsAWi83RCL0peQKLxPORIsB7gogdcHjPu45AlR-SLlAhvfn4xGqjQL0dOaFSXxPJDfSID4HEHbvfLbKXlScglxF3zUYKhz9yA==","created_at":1790847363,"model":"deepseek/deepseek-v4.1-flash","object":"response","output":[],"status":"in_progress","store":false,"thinking":{"type":"enabled"},"service_tier":"default","caching":{"type":"disabled"}},"sequence_number":0,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.in_progress","response":{"id":"resp_VsuVNGayEIAGFRrhq-4foXgIZ9fvcTs97JNgQKssvvWuFJhnmYzV4S2z5vOaO0Snb50Ib1GCSb_qxUkMN-woF33zeYUu8_pkFqqF0T0_LJbEoJjuLlPQtnlaj-XkPfJqCo3MRDzxO0yZCbpE_wuCCIPuJ9kzArIkHFMXLk5rfgbuh3sT37vzfAcvNFN105OZlgcQNkUR8fsc-JzMhtqoIseJgkPy7M7SPMpGdpGy-TY_2FUQyAmzt-zJE8yOOjkoq9GSO972USWltUmOHoCbGziB9wM8OOvI6I4dUSrNPWr5Znzij4opgkdG0TEL-SxfEQvH5OPhYUGcQnyE2j6gCwUm1UI_1fYxg6mGEGhRP5TNqzJu9KqyPP5tDPsUfFbu4EP4VmqsFylvfQUdWyLMTkehZFdT0kRuT8B8OXfqBvaHzLf453KxVC63xGVxck8SIhJ6ENsL66iOqANYRZ5fRMWt0PPHdaEyRtkOOgGgD_y9HJ0UGphYH1gQA9psJe7oA5TirKl0uNNUBVGKTM1n9atwpAZykiVd3bbznt4CeVujB05Gsr7gAaXoKZr04Ym_LeQVw_xkKIUhGv0JmonT5HLc3tEtZoWRLCiWigvcglytxhqwfQW4aQuyyqsAWi83RCL0peQKLxPORIsB7gogdcHjPu45AlR-SLlAhvfn4xGqjQL0dOaFSXxPJDfSID4HEHbvfLbKXlScglxF3zUYKhz9yA==","created_at":1790847363,"model":"deepseek/deepseek-v4.1-flash","object":"response","output":[],"status":"in_progress","store":false,"thinking":{"type":"enabled"},"service_tier":"default","caching":{"type":"disabled"}},"sequence_number":1,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","type":"reasoning","summary":[],"status":"in_progress"},"sequence_number":2,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_part.added","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"summary_index":0,"part":{"type":"summary_text"},"sequence_number":3,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"我们需要","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":4,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"回答用户中文说","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":5,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"“","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":6,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"用中文回复两个字：正常","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":7,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"”。他们","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":8,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"要求用中文回复两个字：","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":9,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"正常。所以直接回复“","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":10,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"正常”两个字即可","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":11,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"。需要确保只有","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":12,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"这两个","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":13,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"字。最终应","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":14,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"只输出：","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":15,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":"正常。","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":16,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.delta","summary_index":0,"delta":" ","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"sequence_number":17,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_text.done","summary_index":0,"item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"text":"我们需要回答用户中文说“用中文回复两个字：正常”。他们要求用中文回复两个字：正常。所以直接回复“正常”两个字即可。需要确保只有这两个字。最终应只输出：正常。 ","sequence_number":18,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.reasoning_summary_part.done","item_id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"我们需要回答用户中文说“用中文回复两个字：正常”。他们要求用中文回复两个字：正常。所以直接回复“正常”两个字即可。需要确保只有这两个字。最终应只输出：正常。 "},"sequence_number":19,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.output_item.done","output_index":0,"sequence_number":20,"item":{"id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","type":"reasoning","summary":[{"type":"summary_text","text":"我们需要回答用户中文说“用中文回复两个字：正常”。他们要求用中文回复两个字：正常。所以直接回复“正常”两个字即可。需要确保只有这两个字。最终应只输出：正常。 "}],"status":"completed"},"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"message","role":"assistant","content":[],"status":"in_progress","id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","phase":"final_answer"},"sequence_number":21,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.content_part.added","item_id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","output_index":1,"content_index":0,"part":{"type":"output_text","text":""},"sequence_number":22,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.output_text.delta","item_id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","output_index":1,"content_index":0,"delta":"正常","sequence_number":23,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.output_text.done","item_id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","output_index":1,"content_index":0,"text":"正常","sequence_number":24,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.content_part.done","item_id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","output_index":1,"content_index":0,"part":{"type":"output_text","text":"正常"},"sequence_number":25,"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.output_item.done","output_index":1,"sequence_number":26,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"正常"}],"status":"completed","id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","phase":"final_answer"},"model":"cc/deepseek-v4.1-flash"}
+
+data: {"type":"response.completed","response":{"id":"resp_VsuVNGayEIAGFRrhq-4foXgIZ9fvcTs97JNgQKssvvWuFJhnmYzV4S2z5vOaO0Snb50Ib1GCSb_qxUkMN-woF33zeYUu8_pkFqqF0T0_LJbEoJjuLlPQtnlaj-XkPfJqCo3MRDzxO0yZCbpE_wuCCIPuJ9kzArIkHFMXLk5rfgbuh3sT37vzfAcvNFN105OZlgcQNkUR8fsc-JzMhtqoIseJgkPy7M7SPMpGdpGy-TY_2FUQyAmzt-zJE8yOOjkoq9GSO972USWltUmOHoCbGziB9wM8OOvI6I4dUSrNPWr5Znzij4opgkdG0TEL-SxfEQvH5OPhYUGcQnyE2j6gCwUm1UI_1fYxg6mGEGhRP5TNqzJu9KqyPP5tDPsUfFbu4EP4VmqsFylvfQUdWyLMTkehZFdT0kRuT8B8OXfqBvaHzLf453KxVC63xGVxck8SIhJ6ENsL66iOqANYRZ5fRMWt0PPHdaEyRtkOOgGgD_y9HJ0UGphYH1gQA9psJe7oA5TirKl0uNNUBVGKTM1n9atwpAZykiVd3bbznt4CeVujB05Gsr7gAaXoKZr04Ym_LeQVw_xkKIUhGv0JmonT5HLc3tEtZoWRLCiWigvcglytxhqwfQW4aQuyyqsAWi83RCL0peQKLxPORIsB7gogdcHjPu45AlR-SLlAhvfn4xGqjQL0dOaFSXxPJDfSID4HEHbvfLbKXlScglxF3zUYKhz9yA==","created_at":1790847363,"model":"deepseek/deepseek-v4.1-flash","object":"response","output":[{"id":"4e0d78d1-bf79-33b9-9ecc-bcc879aa67bc","summary":[{"text":"我们需要回答用户中文说“用中文回复两个字：正常”。他们要求用中文回复两个字：正常。所以直接回复“正常”两个字即可。需要确保只有这两个字。最终应只输出：正常。 ","type":"summary_text"}],"type":"reasoning","status":"completed"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"正常"}],"status":"completed","id":"8dee3cb3-9d90-3721-9a2a-b1c8f6f0c1a1","phase":"final_answer"}],"status":"completed","usage":{"input_tokens":36,"input_tokens_details":{"cached_tokens":0},"output_tokens":47,"output_tokens_details":{"reasoning_tokens":46},"total_tokens":83},"store":false,"thinking":{"type":"enabled"},"service_tier":"default","caching":{"type":"disabled"}},"sequence_number":27,"model":"cc/deepseek-v4.1-flash"}
+
+data: [DONE]
+

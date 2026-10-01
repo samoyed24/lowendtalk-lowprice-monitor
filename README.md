@@ -3,7 +3,8 @@
 定时抓取 [LowEndTalk](https://lowendtalk.com) 的 Offers 板块，用 AI 打标签并生成中文摘要，
 去重后把新增条目邮件推送。
 
-后端不限厂商 —— 任何兼容 OpenAI `/v1/chat/completions` 的服务都可以接。
+后端不限厂商 —— 兼容 OpenAI Chat Completions、OpenAI Responses、
+Anthropic Messages 三种接口格式的服务都可以接。
 
 ## 标签
 
@@ -55,8 +56,9 @@
 
 | Variable | 默认值 | 说明 |
 |---|---|---|
-| `LLM_BASE_URL` | `https://litellm.portcloud.online/v1` | 兼容 OpenAI 格式的接口地址 |
+| `LLM_BASE_URL` | `https://litellm.portcloud.online/v1` | 接口地址 |
 | `LLM_MODEL` | `cc/deepseek-v4.1-flash` | 模型名 |
+| `LLM_API_FORMAT` | `chat_completions` | 接口格式，见下表 |
 | `INTERVAL_MINUTES` | `30` | 推送间隔（分钟） |
 | `SMTP_HOST` | `smtp.qq.com` | |
 | `SMTP_PORT` | `465` | |
@@ -67,19 +69,23 @@
 
 ### 切换模型服务
 
-把 `LLM_BASE_URL` 和 `LLM_MODEL` 换成目标服务的值即可，例如：
+`LLM_API_FORMAT` 支持三种接口格式：
 
-```
-LLM_BASE_URL = https://api.openai.com/v1
-LLM_MODEL    = gpt-4o-mini
-```
+| 取值 | 请求路径 | 认证头 |
+|---|---|---|
+| `chat_completions` | `/chat/completions` | `Authorization: Bearer` |
+| `responses` | `/responses` | `Authorization: Bearer` |
+| `anthropic` | `/messages` | `x-api-key` + `anthropic-version` |
 
-或自建服务：
+常见组合：
 
-```
-LLM_BASE_URL = http://localhost:11434/v1
-LLM_MODEL    = qwen2.5:14b
-```
+| 服务 | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_FORMAT` |
+|---|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | `chat_completions` |
+| OpenAI（新接口） | `https://api.openai.com/v1` | `gpt-4o-mini` | `responses` |
+| Anthropic | `https://api.anthropic.com/v1` | `claude-sonnet-5` | `anthropic` |
+| Ollama | `http://localhost:11434/v1` | `qwen2.5:14b` | `chat_completions` |
+| LiteLLM 等网关 | 网关地址 | 网关侧模型名 | 按网关支持的格式 |
 
 ### 调整推送间隔
 
