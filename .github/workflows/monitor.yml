@@ -1,0 +1,70 @@
+name: LET Low-Price Monitor
+
+on:
+  schedule:
+    # 每 4 小时。GitHub 的 cron 是 UTC —— 00/04/08/12/16/20 UTC
+    # 正好等于北京时间 08/12/16/20/00/04 点。
+    - cron: '0 0,4,8,12,16,20 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只抓取并预览，不发信、不改状态'
+        type: boolean
+        default: false
+
+concurrency:
+  group: let-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      # 已推送的 URL 存在 cache 里。key 每次运行都不同（带 run_id），
+      # 靠 restore-keys 前缀命中上一次的缓存，实现跨运行累积。
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: let-state-${{ github.run_id }}
+          restore-keys: |
+            let-state-
+
+      - name: Run monitor
+        env:
+          LITELLM_TOKEN: ${{ secrets.LITELLM_TOKEN }}
+          LITELLM_BASE_URL: ${{ vars.LITELLM_BASE_URL || 'https://litellm.portcloud.online' }}
+          SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.qq.com' }}
+          SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: python src/monitor.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: let-state-${{ github.run_id }}
+
+      - name: Upload preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-${{ github.run_id }}
+          path: .cache/preview.html
+          if-no-files-found: ignore
+          retention-days: 7
