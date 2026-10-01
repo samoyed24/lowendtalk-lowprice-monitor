@@ -20,6 +20,10 @@ concurrency:
   group: let-monitor
   cancel-in-progress: false
 
+# 只需读取仓库内容（checkout）。缓存与 artifact 由 Actions 自身管理。
+permissions:
+  contents: read
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
