@@ -107,21 +107,18 @@ Actions → LET Low-Price Monitor → **Run workflow**。
 
 ### 5. 调整推送间隔
 
-**GitHub Actions 的 cron 不支持变量**，所以要改两处：
+间隔**写死在代码里**，不通过 Variables 配置。默认每小时一次，要改需同步两处：
 
-1. `.github/workflows/monitor.yml` 里的 `cron` —— 决定唤醒频率
-2. Variable `INTERVAL_MINUTES` —— 决定实际推送间隔（默认 30）
+1. `src/monitor.py` 的 `INTERVAL_MINUTES`（分钟）
+2. `.github/workflows/monitor.yml` 的 `cron`（唤醒频率）
 
-`INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期，否则会有部分唤醒被浪费。常见组合：
+| 推送间隔 | `INTERVAL_MINUTES` | cron |
+|---|---|---|
+| 30 分钟 | `30` | `*/30 * * * *` |
+| 1 小时（默认） | `60` | `0 * * * *` |
+| 4 小时 | `240` | `0 0,4,8,12,16,20 * * *` |
 
-| 推送间隔 | cron |
-|---|---|
-| 30 分钟 | `*/30 * * * *` |
-| 1 小时 | `0 * * * *` |
-| 4 小时 | `0 0,4,8,12,16,20 * * *` |
-
-> 默认 30 分钟意味着**每天最多唤醒 48 次**。LET 一天通常只有几条新帖，
-> 实际邮件量远低于此；嫌多就把间隔调大。
+> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期，否则会有部分唤醒被浪费。
 
 ---
 
@@ -135,7 +132,7 @@ export PC_KEY=... PC_TO=...          # 或 SMTP_USER / SMTP_PASS / MAIL_TO
 
 python src/monitor.py --dry-run      # 预览写入 preview.html，不发信、不改状态
 python src/monitor.py --force        # 忽略间隔，立即执行
-python src/monitor.py                # 正常执行（受 INTERVAL_MINUTES 约束）
+python src/monitor.py                # 正常执行（受间隔约束，默认 60 分钟）
 ```
 
 > **验证配置时请一律用 `--dry-run`。** 真实运行会写状态文件，
@@ -162,7 +159,6 @@ python src/monitor.py                # 正常执行（受 INTERVAL_MINUTES 约�
 | `LLM_BASE_URL` | `https://litellm.portcloud.online/v1` | 接口地址 |
 | `LLM_MODEL` | `cc/deepseek-v4.1-flash` | 模型名 |
 | `LLM_API_FORMAT` | `chat_completions` | 接口格式，见下 |
-| `INTERVAL_MINUTES` | `30` | 推送间隔（分钟） |
 | `PC_URL` | `https://notify.portcloud.online` | Portcloud API 地址 |
 | `SMTP_HOST` | `smtp.qq.com` | |
 | `SMTP_PORT` | `465` | |
@@ -214,7 +210,7 @@ python src/monitor.py                # 正常执行（受 INTERVAL_MINUTES 约�
 
 ```
 唤醒（cron）
-  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES 则跳过
+  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 60）则跳过
      └─ 抓取     FEED_PROXY 转换 RSS
         └─ 解析  时间窗口 / HTML 实体解码 / 剥离重复标题
            └─ 打标 AI 输出 tags + prices + 中文摘要

@@ -2,13 +2,9 @@ name: LET Low-Price Monitor
 
 on:
   schedule:
-    # GitHub Actions 的 cron 不支持变量，必须写死。这里只决定「唤醒频率」，
-    # 实际推送间隔由 INTERVAL_MINUTES 控制（默认 30 分钟）。
-    #
-    # 间隔 < 60 分钟时用这个（每 30 分钟唤醒一次）：
-    - cron: '*/30 * * * *'
-    # 间隔为整小时时改用这个（每 4 小时）：
-    # - cron: '0 0,4,8,12,16,20 * * *'
+    # 每小时唤醒一次。GitHub Actions 的 cron 不支持变量，只能写死；
+    # 间隔值在 src/monitor.py 的 INTERVAL_MINUTES，改动请同步两处。
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -56,7 +52,6 @@ jobs:
           LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'https://litellm.portcloud.online/v1' }}
           LLM_MODEL: ${{ vars.LLM_MODEL || 'cc/deepseek-v4.1-flash' }}
           LLM_API_FORMAT: ${{ vars.LLM_API_FORMAT || 'chat_completions' }}
-          INTERVAL_MINUTES: ${{ vars.INTERVAL_MINUTES || '30' }}
           SMTP_HOST: ${{ vars.SMTP_HOST || 'smtp.qq.com' }}
           SMTP_PORT: ${{ vars.SMTP_PORT || '465' }}
           SMTP_USER: ${{ secrets.SMTP_USER }}

@@ -45,9 +45,9 @@ LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "300"))
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 MAX_POSTS = int(os.environ.get("MAX_POSTS", "60"))
 
-# 实际推送间隔（分钟）。工作流被唤醒得比这更频繁时，脚本会跳过，
-# 避免重复抓取与浪费调用。手动触发（--force）不受此限制。
-INTERVAL_MINUTES = int(os.environ.get("INTERVAL_MINUTES", "30"))
+# 推送间隔（分钟）。需与 .github/workflows/monitor.yml 里的 cron 保持一致：
+# 这里设为 60，cron 也应当是每小时唤醒一次。改动请同步两处。
+INTERVAL_MINUTES = 60
 
 # 只推送带服务器类型标签的条目。Offers 板块里混着 SSL 证书、
 # 控制面板、IP 租赁等非服务器内容，置为 false 可一并推送。
