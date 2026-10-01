@@ -62,6 +62,9 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
+          PC_KEY: ${{ secrets.PC_KEY }}
+          PC_TO: ${{ secrets.PC_TO }}
+          PC_URL: ${{ vars.PC_URL || 'https://notify.portcloud.online' }}
         run: |
           python src/monitor.py \
             ${{ inputs.dry_run && '--dry-run' || '' }} \

@@ -69,6 +69,11 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 MAIL_TO = os.environ.get("MAIL_TO", "")
 
+# Portcloud Notify：托管发信服务，无需自建 SMTP
+PC_URL = os.environ.get("PC_URL", "https://notify.portcloud.online").rstrip("/")
+PC_KEY = os.environ.get("PC_KEY", "")
+PC_TO = os.environ.get("PC_TO", "")
+
 DRY_RUN = "--dry-run" in sys.argv
 FORCE = "--force" in sys.argv
 
@@ -465,25 +470,87 @@ def build_digest(items: list[dict]) -> tuple[str, str]:
     return subject, doc
 
 
-def send_mail(subject: str, html_body: str) -> None:
-    if not (SMTP_USER and SMTP_PASS and MAIL_TO):
-        raise RuntimeError("缺少 SMTP_USER / SMTP_PASS / MAIL_TO")
+def build_text(items: list[dict]) -> str:
+    """纯文本版本，供不支持 HTML 的通道（如 Portcloud Notify）使用。"""
+    lines = [f"LowEndTalk 低价 VPS 汇总 — 新增 {len(items)} 条", ""]
+    for x in items:
+        head = " ".join(f"[{t}]" for t in x["tags"])
+        prices = " / ".join(price_text(p) for p in x["prices"]) or "未列价格"
+        lines.append(f"{head} {x['title']}".strip())
+        lines.append(f"  {prices}  |  {x['zh']}")
+        lines.append(f"  {x['postUrl']}")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def send_via_smtp(subject: str, html_body: str, text_body: str) -> None:
     msg = EmailMessage()
     msg["From"] = SMTP_USER
     msg["To"] = MAIL_TO
     msg["Subject"] = subject
-    msg.set_content("此邮件为 HTML 格式，请用支持 HTML 的客户端查看。")
+    msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
 
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=60, context=ctx) as s:
         s.login(SMTP_USER, SMTP_PASS)
         s.send_message(msg)
-    log(f"邮件已发送 → {MAIL_TO}")
+    log(f"邮件已发送（SMTP）→ {MAIL_TO}")
+
+
+def send_via_portcloud(subject: str, text_body: str) -> None:
+    """Portcloud Notify 只接受纯文本。
+
+    该服务把业务失败表达为 HTTP 200 + success:false，因此不能只看状态码。
+    """
+    r = requests.post(
+        f"{PC_URL}/api/v1/send",
+        headers={
+            "Authorization": f"Bearer {PC_KEY}",
+            "Content-Type": "application/json",
+            "User-Agent": UA,
+        },
+        json={"to": PC_TO, "subject": subject, "text": text_body},
+        timeout=60,
+    )
+    try:
+        data = r.json()
+    except ValueError:
+        raise RuntimeError(f"Portcloud 返回非 JSON（HTTP {r.status_code}）: {r.text[:200]}")
+
+    if data.get("success") is True:
+        log(f"邮件已发送（Portcloud）→ {PC_TO}（id={data.get('message_id')}）")
+        return
+    err = data.get("error") or {}
+    raise RuntimeError(
+        f"Portcloud 发送失败: {err.get('code') or f'HTTP_{r.status_code}'} — "
+        f"{err.get('message') or r.text[:200]}"
+    )
+
+
+def send_mail(subject: str, html_body: str, text_body: str = "") -> None:
+    """按已配置的通道发送。Portcloud 与 SMTP 都配置时两者都发。"""
+    if not text_body:
+        text_body = "此邮件为 HTML 格式，请用支持 HTML 的客户端查看。"
+
+    channels = []
+    if PC_KEY and PC_TO:
+        channels.append(lambda: send_via_portcloud(subject, text_body))
+    if SMTP_USER and SMTP_PASS and MAIL_TO:
+        channels.append(lambda: send_via_smtp(subject, html_body, text_body))
+
+    if not channels:
+        raise RuntimeError(
+            "未配置任何发送通道。请设置 PC_KEY + PC_TO，"
+            "或 SMTP_USER + SMTP_PASS + MAIL_TO"
+        )
+    for send in channels:
+        send()
 
 
 def send_alert(error: str) -> None:
     """失败时告警。主题刻意区分，方便在邮箱里一眼认出。"""
+    text = f"LowEndTalk 监控本次运行失败\n\n{error[:2000]}\n\n时间：{datetime.now(TZ_OFFSET):%Y-%m-%d %H:%M} (CST)"
     try:
         send_mail(
             "🚨 LET 监控运行失败",
@@ -492,6 +559,7 @@ def send_alert(error: str) -> None:
   <p style="color:#b91c1c;white-space:pre-wrap">{html.escape(error[:2000])}</p>
   <p style="color:#6b7280">时间：{datetime.now(TZ_OFFSET):%Y-%m-%d %H:%M} (CST)</p>
 </div>""",
+            text,
         )
     except Exception as exc:  # noqa: BLE001 - 告警失败不应掩盖原始错误
         log(f"告警邮件也发不出去: {exc}")
@@ -568,7 +636,7 @@ def run() -> int:
 
     if items:
         subject, doc = build_digest(items)
-        send_mail(subject, doc)
+        send_mail(subject, doc, build_text(items))
 
     # 投递成功后才记状态 —— 失败时这些帖子下次还会被处理，不会丢
     state["sent"].extend(p["postUrl"] for p in new)
