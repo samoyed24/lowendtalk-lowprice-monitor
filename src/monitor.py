@@ -498,8 +498,9 @@ def send_via_smtp(subject: str, html_body: str, text_body: str) -> None:
     log(f"邮件已发送（SMTP）→ {MAIL_TO}")
 
 
-def send_via_portcloud(subject: str, text_body: str) -> None:
-    """Portcloud Notify 只接受纯文本。
+def send_via_portcloud(subject: str, html_body: str, text_body: str) -> None:
+    """同时传 text 与 html，服务端生成 multipart/alternative，
+    由客户端选择展示版本。
 
     该服务把业务失败表达为 HTTP 200 + success:false，因此不能只看状态码。
     """
@@ -510,7 +511,7 @@ def send_via_portcloud(subject: str, text_body: str) -> None:
             "Content-Type": "application/json",
             "User-Agent": UA,
         },
-        json={"to": PC_TO, "subject": subject, "text": text_body},
+        json={"to": PC_TO, "subject": subject, "text": text_body, "html": html_body},
         timeout=60,
     )
     try:
@@ -535,7 +536,7 @@ def send_mail(subject: str, html_body: str, text_body: str = "") -> None:
 
     channels = []
     if PC_KEY and PC_TO:
-        channels.append(lambda: send_via_portcloud(subject, text_body))
+        channels.append(lambda: send_via_portcloud(subject, html_body, text_body))
     if SMTP_USER and SMTP_PASS and MAIL_TO:
         channels.append(lambda: send_via_smtp(subject, html_body, text_body))
 

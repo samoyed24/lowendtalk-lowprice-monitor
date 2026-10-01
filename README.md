@@ -82,6 +82,9 @@ Fork 之后，GitHub **默认不运行 fork 仓库里的 workflow**，定时任�
 | `PC_KEY` | API Key，形如 `pck_xxx` |
 | `PC_TO` | 收件邮箱（须与上一步验证过的地址一致） |
 
+邮件以 `multipart/alternative` 发送（同时带 HTML 与纯文本正文），
+由客户端选择展示版本。
+
 **通道 2 —— SMTP 邮件**
 
 适合已有邮箱、且不想依赖第三方服务的场景。需**同时配置**下面三项：
