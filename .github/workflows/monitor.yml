@@ -53,8 +53,7 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
         run: python src/monitor.py ${{ inputs.dry_run && '--dry-run' || '' }}
 
-      # dry-run 不写状态，所以也不该存 —— 否则空状态会覆盖真实状态，
-      # 导致下一次运行把窗口内的帖子全部重发。
+      # dry-run 不写状态，因此也不保存，避免覆盖已有的状态缓存。
       - name: Save state
         if: ${{ !inputs.dry_run }}
         uses: actions/cache/save@v4

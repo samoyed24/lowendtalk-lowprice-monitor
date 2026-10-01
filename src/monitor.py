@@ -3,11 +3,6 @@
 
 抓取 LET 的 Offers 板块 → AI 分类与中文摘要 → 按价格规则筛选 →
 去重后把新增条目邮件推送。
-
-设计上刻意规避了之前 n8n 版本踩过的坑：
-  * 模型名从 /v1/models 动态解析（网关 10 天内改过 3 次名）
-  * 去重放在投递成功之后（失败不会把帖子误标为已发送）
-  * 任何异常都非零退出并发告警邮件（不再静默失败）
 """
 
 from __future__ import annotations
@@ -50,8 +45,7 @@ TO_BASIS = {
 
 LOOKBACK_DAYS = 7
 MAX_POSTS = 60          # 单次送进 AI 的条数上限，约束首次运行的规模
-# 状态单独放一个目录，和预览文件分开 —— 预览不该进状态缓存，
-# 否则 dry-run 会覆盖掉真实状态，导致下次把窗口内帖子全部重发。
+# 状态与预览分开存放：状态进 Actions cache，预览只作为 artifact 上传。
 STATE_PATH = Path(".state/sent.json")
 PREVIEW_PATH = Path("preview.html")
 STATE_MAX = 5000        # 状态文件里保留的 URL 上限
@@ -195,8 +189,7 @@ def litellm_headers() -> dict:
 def resolve_model() -> str:
     """从 /v1/models 解析出当前可用的模型 id。
 
-    网关改过三次命名（deepseek/deepseek-v4.1-flash → deepseek-v4.1-flash
-    → cc/deepseek-v4.1-flash），硬编码必然失效，所以每次运行都问一次。
+    网关侧模型命名会变动，且同名模型可能挂在多个通道下，因此不硬编码。
     """
     r = requests.get(f"{LITELLM_BASE_URL}/v1/models", headers=litellm_headers(), timeout=60)
     r.raise_for_status()
