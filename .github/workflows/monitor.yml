@@ -64,6 +64,7 @@ jobs:
           PC_KEY: ${{ secrets.PC_KEY }}
           PC_TO: ${{ secrets.PC_TO }}
           PC_URL: ${{ vars.PC_URL || 'https://notify.portcloud.online' }}
+          PC_TIMEOUT: ${{ vars.PC_TIMEOUT || '60' }}
         run: |
           python src/monitor.py \
             ${{ inputs.dry_run && '--dry-run' || '' }} \

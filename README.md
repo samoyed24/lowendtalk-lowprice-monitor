@@ -85,6 +85,13 @@ Fork 之后，GitHub **默认不运行 fork 仓库里的 workflow**，定时任�
 邮件以 `multipart/alternative` 发送（同时带 HTML 与纯文本正文），
 由客户端选择展示版本。
 
+> **异步两段式投递**：`POST /api/v1/send` 只受理（返回 `201` + `log_id`），
+> 程序在受理后等待 1 秒，再用 `GET /api/v1/send/{log_id}` 每隔 1 秒轮询，直到 `success` / `failed` / `rejected`。
+> 受理只请求一次、**不重试发送**（重试可能重复投递）；受理后的轮询预算由 `PC_TIMEOUT`（默认 60 秒）控制。
+> 短暂查询网络错误、HTTP 429 / 5xx 会在预算内继续查询。超时或无法确认状态时，报「投递结果未知」并且不保存状态，不代表邮件一定未送达。
+> 后续运行可能再次发送未记入状态的内容，产生重复邮件；可根据报错中的 `log_id` 在控制台核对。
+> 本地可设置 `PC_TIMEOUT=120 python src/monitor.py`；Actions 中设置同名 Variable。该设置不改变受理 POST 的 60 秒请求超时；查询请求按剩余预算限制连接/读取超时，但不保证精确的墙钟总耗时。
+
 **通道 2 —— SMTP 邮件**
 
 适合已有邮箱、且不想依赖第三方服务的场景。需**同时配置**下面三项：
@@ -160,6 +167,7 @@ python src/monitor.py                # 正常执行（受间隔约束，默认 6
 | `LLM_MODEL` | `cc/deepseek-v4.1-flash` | 模型名 |
 | `LLM_API_FORMAT` | `chat_completions` | 接口格式，见下 |
 | `PC_URL` | `https://notify.portcloud.online` | Portcloud API 地址 |
+| `PC_TIMEOUT` | `60` | Portcloud 轮询投递结果的总预算（秒），须为正整数 |
 | `SMTP_HOST` | `smtp.qq.com` | |
 | `SMTP_PORT` | `465` | |
 | `FEED_URL` | LET Offers 板块 RSS | 抓取源 |

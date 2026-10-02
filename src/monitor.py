@@ -74,6 +74,27 @@ PC_URL = os.environ.get("PC_URL", "https://notify.portcloud.online").rstrip("/")
 PC_KEY = os.environ.get("PC_KEY", "")
 PC_TO = os.environ.get("PC_TO", "")
 
+
+def parse_pc_timeout(raw: str | None) -> int:
+    """解析 PC_TIMEOUT：留空（含空白串）用默认 60，否则必须是正整数。"""
+    if raw is None or not str(raw).strip():
+        return 60
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        raise ValueError(f"PC_TIMEOUT 必须是正整数，当前值：{raw!r}") from None
+    if value <= 0:
+        raise ValueError(f"PC_TIMEOUT 必须是正整数，当前值：{raw!r}")
+    return value
+
+
+# 轮询投递结果的总预算（秒），自受理成功（拿到 log_id）起用单调时钟计。
+PC_TIMEOUT = parse_pc_timeout(os.environ.get("PC_TIMEOUT"))
+# 两次状态查询之间的间隔（秒）：首次在受理 1 秒后，之后每 1 秒一次。
+PC_POLL_INTERVAL = 1
+# 单次 HTTP 请求（POST / GET）的超时上限（秒）。
+PC_REQUEST_TIMEOUT = 60
+
 DRY_RUN = "--dry-run" in sys.argv
 FORCE = "--force" in sys.argv
 
@@ -498,35 +519,151 @@ def send_via_smtp(subject: str, html_body: str, text_body: str) -> None:
     log(f"邮件已发送（SMTP）→ {MAIL_TO}")
 
 
+# Portcloud 投递终态为 success / failed / rejected。
+PC_TERMINAL_STATUSES = ("success", "failed", "rejected")
+PC_PENDING_STATUSES = ("queued", "sending")
+PC_KNOWN_STATUSES = PC_PENDING_STATUSES + PC_TERMINAL_STATUSES
+
+
+class PortcloudUnconfirmed(RuntimeError):
+    """邮件可能已投递，但最终状态无法确认（超时 / 网络错误 / 响应异常）。
+
+    这类失败**不保证**没有发出去，调用方不应据此重试，以免重复投递；
+    消息里带上 log_id，便于人工到控制台核对。
+    """
+
+
+def _pc_poll_once(log_id: int, deadline: float) -> tuple[str, str | None]:
+    """查询一次投递状态，返回 ``(status, failure_reason)``。
+
+    仅在预算内重试「连接错误 / 超时 / HTTP 429 / 5xx」；其余情况
+    （含 200 但结构异常、log_id 不匹配、未知状态）一律判为结果未知。
+    """
+    last: str | None = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PortcloudUnconfirmed(
+                f"Portcloud 状态轮询超出预算（log_id={log_id}，投递结果未知）：{last or '预算耗尽'}"
+            )
+        try:
+            r = requests.get(
+                f"{PC_URL}/api/v1/send/{log_id}",
+                headers={"Authorization": f"Bearer {PC_KEY}", "User-Agent": UA},
+                timeout=min(PC_REQUEST_TIMEOUT, remaining),
+            )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last = f"{type(exc).__name__}: {str(exc)[:120]}"
+        except requests.RequestException as exc:
+            raise PortcloudUnconfirmed(
+                f"Portcloud 状态查询异常（log_id={log_id}，投递结果未知）："
+                f"{type(exc).__name__}: {str(exc)[:120]}"
+            ) from exc
+        else:
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except ValueError as exc:
+                    raise PortcloudUnconfirmed(
+                        f"Portcloud 状态响应非 JSON（HTTP 200，log_id={log_id}，投递结果未知）"
+                    ) from exc
+                got_id = data.get("log_id") if isinstance(data, dict) else None
+                status = data.get("status") if isinstance(data, dict) else None
+                if type(got_id) is not int or got_id != log_id or status not in PC_KNOWN_STATUSES:
+                    raise PortcloudUnconfirmed(
+                        f"Portcloud 状态响应异常（log_id={log_id}，返回 {data!r}，投递结果未知）"
+                    )
+                reason = data.get("failure_reason")
+                return status, (str(reason) if reason else None)
+            if r.status_code != 429 and r.status_code < 500:
+                # 4xx（非 429）说明查询本身被拒，无法确认投递结果。
+                raise PortcloudUnconfirmed(
+                    f"Portcloud 状态查询被拒: HTTP {r.status_code}"
+                    f"（log_id={log_id}，投递结果未知）"
+                )
+            last = f"HTTP {r.status_code}"
+
+        # 可重试错误：等一个间隔再试，超出预算则放弃。
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PortcloudUnconfirmed(
+                f"Portcloud 状态轮询超出预算（log_id={log_id}，投递结果未知）：{last or '预算耗尽'}"
+            )
+        time.sleep(min(PC_POLL_INTERVAL, remaining))
+
+
 def send_via_portcloud(subject: str, html_body: str, text_body: str) -> None:
     """同时传 text 与 html，服务端生成 multipart/alternative，
     由客户端选择展示版本。
 
-    该服务把业务失败表达为 HTTP 200 + success:false，因此不能只看状态码。
+    Portcloud 采用异步两段式：``POST /api/v1/send`` 返回 201 + ``log_id``，
+    再轮询 ``GET /api/v1/send/{log_id}`` 直到终态。受理只 POST 一次、
+    绝不重试（重试可能重复投递）；轮询预算自受理成功起用单调时钟计。
     """
-    r = requests.post(
-        f"{PC_URL}/api/v1/send",
-        headers={
-            "Authorization": f"Bearer {PC_KEY}",
-            "Content-Type": "application/json",
-            "User-Agent": UA,
-        },
-        json={"to": PC_TO, "subject": subject, "text": text_body, "html": html_body},
-        timeout=60,
-    )
+    payload = {"to": PC_TO, "subject": subject, "text": text_body, "html": html_body}
+    headers = {
+        "Authorization": f"Bearer {PC_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": UA,
+    }
+
+    # ---- 受理：只 POST 一次 ----
+    try:
+        r = requests.post(
+            f"{PC_URL}/api/v1/send",
+            headers=headers,
+            json=payload,
+            timeout=PC_REQUEST_TIMEOUT,
+        )
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        # 请求可能已到达服务端，无法得知是否入队。
+        raise PortcloudUnconfirmed(
+            f"Portcloud 受理请求失败（投递结果未知）：{type(exc).__name__}: {str(exc)[:120]}"
+        ) from exc
+    except requests.RequestException as exc:
+        raise PortcloudUnconfirmed(
+            f"Portcloud 受理请求异常（投递结果未知）：{type(exc).__name__}: {str(exc)[:120]}"
+        ) from exc
+
+    if r.status_code != 201:
+        # 服务端明确未受理（未 Star / 配额 / 参数错误等），没有投递发生。
+        raise RuntimeError(f"Portcloud 受理失败: HTTP {r.status_code} — {r.text[:200]}")
+
     try:
         data = r.json()
-    except ValueError:
-        raise RuntimeError(f"Portcloud 返回非 JSON（HTTP {r.status_code}）: {r.text[:200]}")
+    except ValueError as exc:
+        raise PortcloudUnconfirmed(
+            f"Portcloud 受理响应非 JSON（HTTP 201，投递结果未知）: {r.text[:200]}"
+        ) from exc
 
-    if data.get("success") is True:
-        log(f"邮件已发送（Portcloud）→ {PC_TO}（id={data.get('message_id')}）")
-        return
-    err = data.get("error") or {}
-    raise RuntimeError(
-        f"Portcloud 发送失败: {err.get('code') or f'HTTP_{r.status_code}'} — "
-        f"{err.get('message') or r.text[:200]}"
-    )
+    log_id = data.get("log_id") if isinstance(data, dict) else None
+    # bool 是 int 的子类，需显式排除，避免 True 被当作 log_id=1。
+    if isinstance(log_id, bool) or not isinstance(log_id, int) or log_id <= 0:
+        raise PortcloudUnconfirmed(
+            f"Portcloud 受理响应缺少合法 log_id（HTTP 201，投递结果未知）: {r.text[:200]}"
+        )
+
+    # ---- 轮询：预算自受理成功起计，首次 1 秒后，之后每 1 秒一次 ----
+    deadline = time.monotonic() + PC_TIMEOUT
+    log(f"Portcloud 已受理（log_id={log_id}），轮询投递结果，预算 {PC_TIMEOUT}s")
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PortcloudUnconfirmed(
+                f"Portcloud 轮询超时（{PC_TIMEOUT}s，log_id={log_id}，投递结果未知）"
+            )
+        time.sleep(min(PC_POLL_INTERVAL, remaining))
+
+        status, reason = _pc_poll_once(log_id, deadline)
+        if status == "success":
+            log(f"邮件已发送（Portcloud）→ {PC_TO}（log_id={log_id}）")
+            return
+        if status in ("failed", "rejected"):
+            raise RuntimeError(
+                f"Portcloud 投递{status}（log_id={log_id}）：{reason or '服务端未提供原因'}"
+            )
+        # queued / sending：继续等下一次轮询。
 
 
 def send_mail(subject: str, html_body: str, text_body: str = "") -> None:
