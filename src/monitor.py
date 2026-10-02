@@ -46,8 +46,8 @@ LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 MAX_POSTS = int(os.environ.get("MAX_POSTS", "60"))
 
 # 推送间隔（分钟）。需与 .github/workflows/monitor.yml 里的 cron 保持一致：
-# 这里设为 60，cron 也应当是每小时唤醒一次。改动请同步两处。
-INTERVAL_MINUTES = 60
+# 默认 240 分钟，cron 每 4 小时在第 17 分钟唤醒。改动请同步两处。
+INTERVAL_MINUTES = 240
 
 # 只推送带服务器类型标签的条目。Offers 板块里混着 SSL 证书、
 # 控制面板、IP 租赁等非服务器内容，置为 false 可一并推送。
