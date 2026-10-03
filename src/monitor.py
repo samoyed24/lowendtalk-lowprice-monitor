@@ -323,6 +323,46 @@ def llm_chat(system: str, user: str, *, max_tokens: int = 8000) -> str:
     return _extract_chat_completions(data)
 
 
+def first_json_array(text: str):
+    """取 text 里第一个完整的 JSON 数组，忽略其后的任何内容。
+
+    不能用 ``re.search(r"\\[[\\s\\S]*\\]", text)``：那是贪婪匹配，会吃到
+    **最后一个** ``]``，把模型在数组后面追加的解释或第二个数组一起并进去，
+    导致 json.loads 报 "Extra data"。这里按括号配平扫描，并跳过字符串内的
+    引号转义与括号。
+    """
+    start = text.find("[")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"JSON 数组解析失败: {exc}；原文: {text[start:i + 1][:300]}"
+                    ) from exc
+    return None
+
+
 def classify(posts: list[dict]) -> list[dict]:
     payload = [
         {"i": i, "title": p["title"][:200], "body": p["body"][:700]}
@@ -332,10 +372,9 @@ def classify(posts: list[dict]) -> list[dict]:
         SYSTEM_PROMPT,
         "分析以下帖子：\n" + json.dumps(payload, ensure_ascii=False),
     )
-    m = re.search(r"\[[\s\S]*\]", text)
-    if not m:
+    verdicts = first_json_array(text)
+    if not isinstance(verdicts, list):
         raise RuntimeError(f"响应里没有 JSON 数组: {text[:300]}")
-    verdicts = json.loads(m.group(0))
     log(f"AI 打了 {len(verdicts)} 条的标签")
     return verdicts
 
