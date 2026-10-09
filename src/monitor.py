@@ -45,6 +45,10 @@ LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "300"))
 LOOKBACK_DAYS = int(os.environ.get("LOOKBACK_DAYS", "7"))
 MAX_POSTS = int(os.environ.get("MAX_POSTS", "60"))
 
+# 单次送进 AI 分类的条数。帖子多时一次返回的 JSON 数组过长会被截断，
+# 拆成多批调用，每批的序号仍是全局序号。
+CLASSIFY_BATCH_SIZE = max(1, int(os.environ.get("CLASSIFY_BATCH_SIZE", "10")))
+
 # 推送间隔（分钟）。需与 .github/workflows/monitor.yml 里的 cron 保持一致：
 # 默认 240 分钟，cron 每 4 小时在第 17 分钟唤醒。改动请同步两处。
 INTERVAL_MINUTES = 240
@@ -364,19 +368,28 @@ def first_json_array(text: str):
 
 
 def classify(posts: list[dict]) -> list[dict]:
-    payload = [
-        {"i": i, "title": p["title"][:200], "body": p["body"][:700]}
-        for i, p in enumerate(posts)
-    ]
-    text = llm_chat(
-        SYSTEM_PROMPT,
-        "分析以下帖子：\n" + json.dumps(payload, ensure_ascii=False),
-    )
-    verdicts = first_json_array(text)
-    if not isinstance(verdicts, list):
-        raise RuntimeError(f"响应里没有 JSON 数组: {text[:300]}")
-    log(f"AI 打了 {len(verdicts)} 条的标签")
-    return verdicts
+    # 多帖子时一次返回的 JSON 数组过长会被截断（输出超 max_tokens），
+    # 拆成多批调用，每批的序号仍是全局序号。
+    verdicts_all: list[dict] = []
+    for start in range(0, len(posts), CLASSIFY_BATCH_SIZE):
+        chunk = posts[start:start + CLASSIFY_BATCH_SIZE]
+        payload = [
+            {"i": start + j, "title": p["title"][:200], "body": p["body"][:700]}
+            for j, p in enumerate(chunk)
+        ]
+        text = llm_chat(
+            SYSTEM_PROMPT,
+            "分析以下帖子：\n" + json.dumps(payload, ensure_ascii=False),
+        )
+        verdicts = first_json_array(text)
+        if not isinstance(verdicts, list):
+            if "[" in text:
+                raise RuntimeError(f"响应 JSON 数组不完整（可能输出被截断）: {text[:300]}")
+            raise RuntimeError(f"响应里没有 JSON 数组: {text[:300]}")
+        verdicts_all.extend(verdicts)
+        log(f"AI 打了第 {start + 1}-{start + len(chunk)} 条的标签")
+    log(f"AI 打了 {len(verdicts_all)} 条的标签")
+    return verdicts_all
 
 
 # ---------------------------------------------------------------- 整理

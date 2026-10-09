@@ -174,6 +174,7 @@ python src/monitor.py                # 正常执行（受间隔约束，默认 2
 | `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
 | `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
 | `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
+| `CLASSIFY_BATCH_SIZE` | `10` | 单次 AI 分类的条数；帖子多时自动拆成多批，避免一次返回过长被截断 |
 | `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
 
 ### 切换模型服务

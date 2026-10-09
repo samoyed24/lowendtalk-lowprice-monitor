@@ -89,6 +89,31 @@ class TestClassify(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 monitor.classify(posts)
 
+    def test_truncated_array_raises_truncation_hint(self):
+        # 输出被截断（有 [ 但配不成完整数组）时，报错要提示截断而非“没有数组”。
+        posts = [{"title": "t", "body": "b"}]
+        with patch.object(monitor, "llm_chat", return_value='[{"i":0,'):
+            with self.assertRaisesRegex(RuntimeError, "截断"):
+                monitor.classify(posts)
+
+    def test_many_posts_split_into_batches(self):
+        import json
+
+        posts = [{"title": f"t{i}", "body": f"b{i}"} for i in range(25)]
+        seen = []
+
+        def fake_llm(system, user, **kw):
+            ids = [m.group(1) for m in __import__("re").finditer(r'"i":\s*(\d+)', user)]
+            seen.append(ids)
+            arr = [{"i": int(i), "tags": ["vps"], "prices": [], "zh": "x"} for i in ids]
+            return json.dumps(arr, ensure_ascii=False)
+
+        with patch.object(monitor, "llm_chat", side_effect=fake_llm):
+            with patch.object(monitor, "CLASSIFY_BATCH_SIZE", 10):
+                verdicts = monitor.classify(posts)
+        self.assertEqual([v["i"] for v in verdicts], list(range(25)))
+        self.assertEqual([len(batch) for batch in seen], [10, 10, 5])
+
 
 if __name__ == "__main__":
     unittest.main()
