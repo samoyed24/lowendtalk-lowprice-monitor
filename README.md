@@ -86,7 +86,7 @@ npm run deploy
 
 | Variable | 默认值 | 说明 |
 |---|---|---|
-| `AI_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | Workers AI 模型；默认 Qwen3 30B A3B，调用时追加 `/no_think`，减少推理输出 |
+| `AI_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | Workers AI 模型；默认 Qwen3 30B A3B，调用时追加 `/no_think`，并用 JSON Schema 约束分类输出结构 |
 | `FEED_URL` | LET Offers 板块 RSS | 抓取源 |
 | `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
 | `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
@@ -191,6 +191,8 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可。部分模型需要 Workers Paid 计划或 AI Gateway 额度。
 
 默认 Qwen3 30B A3B 的单位 token 消耗比原来的 Llama 3.3 70B 更低，并使用 Qwen 的 [`/no_think` 软开关](https://qwenlm.github.io/blog/qwen3/) 请求非思考模式。更换模型不会重置免费额度：[每天 10,000 Neurons，UTC 零点重置](https://developers.cloudflare.com/workers-ai/platform/pricing/)。本地测试也会消耗远端额度；仅新增帖子进入 AI，但清空状态或发信失败后重跑可能重复分析。
+
+默认 Qwen 调用使用 JSON Schema 请求完整的 `i/tags/prices/zh` 数组，并兼容接口返回的文本或已解析数组。格式约束不保证价格、配置等事实正确；若返回仍不完整或无法解析，运行会失败且不保存状态，不会截掉错误条目后记为已推送。
 
 ---
 

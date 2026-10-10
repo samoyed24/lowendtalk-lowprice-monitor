@@ -7,6 +7,37 @@
 
 import { buildAlert, runPipeline, sendMail } from "./monitor";
 import type { Deps, MonitorConfig, PipelineState, RunHandlers } from "./monitor";
+
+const CLASSIFY_RESPONSE_FORMAT = {
+	type: "json_schema",
+	json_schema: {
+		type: "array",
+		items: {
+			type: "object",
+			properties: {
+				i: { type: "integer" },
+				tags: { type: "array", items: { type: "string" } },
+				prices: {
+					type: "array",
+					items: {
+						type: "object",
+						properties: {
+							amount: { type: "number" },
+							currency: { type: ["string", "null"] },
+							period: { type: "string" },
+						},
+						required: ["amount", "currency", "period"],
+						additionalProperties: false,
+					},
+				},
+				zh: { type: "string" },
+			},
+			required: ["i", "tags", "prices", "zh"],
+			additionalProperties: false,
+		},
+	},
+};
+
 // ---- 定时入口 ----
 
 export default {
@@ -103,7 +134,7 @@ async function loadStateFromKv(env: Env): Promise<PipelineState> {
 	}
 }
 
-// Workers AI 的 chat 输出：{ response } 或 OpenAI 兼容的 { choices[0].message.content }。
+// Workers AI 的 chat 输出：{ response }（文本或 JSON Mode 数组），或 { choices[0].message.content }。
 function extractAiText(out: unknown): string {
 	if (typeof out !== "object" || out === null) return "";
 	if ("response" in out && typeof out.response === "string" && out.response) return out.response;
@@ -119,10 +150,12 @@ function extractAiText(out: unknown): string {
 			return first.text;
 		}
 	}
+	if ("response" in out && Array.isArray(out.response)) return JSON.stringify(out.response);
 	return "";
 }
 
 async function aiChatViaBinding(env: Env, model: string, system: string, user: string): Promise<string> {
+	const isQwen = model === "@cf/qwen/qwen3-30b-a3b-fp8";
 	let last: unknown = null;
 	for (let attempt = 1; attempt <= 3; attempt++) {
 		try {
@@ -131,10 +164,11 @@ async function aiChatViaBinding(env: Env, model: string, system: string, user: s
 				{
 					messages: [
 						{ role: "system", content: system },
-						{ role: "user", content: model === "@cf/qwen/qwen3-30b-a3b-fp8" ? `${user}\n/no_think` : user },
+						{ role: "user", content: isQwen ? `${user}\n/no_think` : user },
 					],
 					temperature: 0,
 					max_tokens: 8000,
+					...(isQwen ? { response_format: CLASSIFY_RESPONSE_FORMAT } : {}),
 				} as Record<string, unknown>,
 			);
 			const text = extractAiText(out);
