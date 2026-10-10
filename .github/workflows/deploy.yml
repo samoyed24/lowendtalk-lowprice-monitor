@@ -64,18 +64,26 @@ jobs:
       - name: 部署 Worker
         id: deploy
         run: |
-          set +e
-          npx wrangler deploy 2>&1 | tee /tmp/deploy.log
-          code="${PIPESTATUS[0]}"
-          set -e
+          # 首次部署时 KV 刚创建，API 可能还没完全就绪；有界重试，输出始终完整打印。
+          code=1
+          for attempt in 1 2 3; do
+            set +e
+            npx wrangler deploy 2>&1 | tee /tmp/deploy.log
+            code="${PIPESTATUS[0]}"
+            set -e
+            [ "$code" = "0" ] && break
+            echo "::warning::wrangler deploy 第 $attempt 次失败（退出码 $code）"
+            [ "$attempt" = "3" ] && break
+            sleep $((attempt * 10))
+          done
           url="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           if [ "$code" != "0" ]; then
-            echo "::error::wrangler deploy 失败（退出码 $code），完整输出见上方"
+            echo "::error::wrangler deploy 重试 3 次仍失败（退出码 $code），完整输出见上方"
             exit "$code"
           fi
           if [ -n "$url" ]; then
-            curl -fsS --max-time 30 "$url/healthz" || echo "::warning::健康检查未通过，可稍后手动访问 $url/healthz"
+            curl -fsS --max-time 30 "$url/healthz" || echo "::warning::健康检查未通过（新子域证书可能仍在签发），可稍后访问 $url/healthz"
           fi
 
       - name: 写入 Worker secrets
