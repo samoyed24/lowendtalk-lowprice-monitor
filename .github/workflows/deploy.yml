@@ -59,7 +59,15 @@ jobs:
         run: ./scripts/resolve-kv.sh
 
       - name: 部署 Worker
-        run: npx wrangler deploy
+        id: deploy
+        run: |
+          out="$(npx wrangler deploy 2>&1)"
+          printf '%s\n' "$out"
+          url="$(printf '%s' "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          if [ -n "$url" ]; then
+            curl -fsS --max-time 30 "$url/healthz" && echo "健康检查通过"
+          fi
 
       - name: 写入 Worker secrets
         run: |
@@ -80,10 +88,15 @@ jobs:
           rm -f "$tmp"
 
       - name: 部署结果
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
         run: |
           echo "### 部署完成 🎉" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Worker: \`let-lowprice-monitor\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- 定时: 每小时第 17 分钟（UTC）" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$DEPLOY_URL" ]; then
+            echo "- 地址: $DEPLOY_URL（\`/healthz\` 返回 {\"ok\":true}）" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "- 定时: 每小时第 17 分钟（UTC），首次创建触发器最多需 15 分钟传播" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "其余参数（AI_MODEL、推送间隔、SMTP 端口等）在 \`wrangler.jsonc\` 里改，改完重跑本 workflow。" >> "$GITHUB_STEP_SUMMARY"
