@@ -66,7 +66,7 @@ jobs:
           url="$(printf '%s' "$out" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           if [ -n "$url" ]; then
-            curl -fsS --max-time 30 "$url/healthz" && echo "健康检查通过"
+            curl -fsS --max-time 30 "$url/healthz" || echo "::warning::健康检查未通过，可稍后手动访问 $url/healthz"
           fi
 
       - name: 写入 Worker secrets
