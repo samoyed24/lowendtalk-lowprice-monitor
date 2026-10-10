@@ -1,6 +1,6 @@
 // LowEndTalk 低价监控 Worker 入口：Cron 定时 → pipeline → KV 状态 → 发信。
 //
-// 定时：wrangler.jsonc 的 triggers.crons（默认 */30 * * * *，UTC）。
+// 定时：wrangler.jsonc 的 triggers.crons（默认 17 * * * *，UTC）。
 // 状态：STATE KV（sent 已推送 URL + lastRun），替代原来 Actions cache 的状态文件。
 // AI：Workers AI 绑定（env.AI），不再接外部 LLM 接口。
 // 发信：AgentNotify（推荐）与自定义 SMTP 双通道，至少配一个，都配则同时发送。
@@ -102,7 +102,7 @@ function buildConfig(env: AppEnv): MonitorConfig {
 		maxPosts: readInt(String(env.MAX_POSTS), 60),
 		classifyBatchSize: readInt(String(env.CLASSIFY_BATCH_SIZE), 1),
 		requireServerTag: requireTag !== "false" && requireTag !== "0",
-		intervalMinutes: readInt(String(env.INTERVAL_MINUTES), 240),
+		intervalMinutes: readInt(String(env.INTERVAL_MINUTES), 60),
 		aiModel: String(env.AI_MODEL),
 		notifyUrl: String(env.NOTIFY_URL ?? env.PC_URL ?? "https://notify.portcloud.online").replace(/\/+$/, ""),
 		notifyKey: envStr(env, "NOTIFY_KEY") || envStr(env, "PC_KEY"),

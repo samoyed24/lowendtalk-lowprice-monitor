@@ -66,7 +66,7 @@ npx wrangler secret put MAIL_TO     # 收件邮箱
 npm run deploy
 ```
 
-部署后 Cron 自动生效（默认每 30 分钟唤醒，UTC），无需在 dashboard 手动添加。首次创建或修改触发器[最多需要 15 分钟传播](https://developers.cloudflare.com/workers/configuration/cron-triggers/)，部署不会立即运行：需要等传播完成后的下一个整点或半点。在 dashboard 的 Workers → Settings → Trigger Events → View events 查看记录；新 Worker 的历史事件展示还可能延迟最多 30 分钟。`npx wrangler tail` 只看连接后的实时日志，不会补放历史调用。
+部署后 Cron 自动生效（默认每小时第 17 分钟唤醒，UTC），无需在 dashboard 手动添加。首次创建或修改触发器[最多需要 15 分钟传播](https://developers.cloudflare.com/workers/configuration/cron-triggers/)，部署不会立即运行：需要等传播完成后的下一个每小时第 17 分钟。在 dashboard 的 Workers → Settings → Trigger Events → View events 查看记录；新 Worker 的历史事件展示还可能延迟最多 30 分钟。`npx wrangler tail` 只看连接后的实时日志，不会补放历史调用。
 
 ## 二、配置项
 
@@ -93,7 +93,7 @@ npm run deploy
 | `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
 | `CLASSIFY_BATCH_SIZE` | `1` | 单次 AI 分类的条数；完整正文默认每次 1 帖，避免多篇长文挤占上下文。调大会减少调用次数，但更容易超出模型限制 |
 | `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
-| `INTERVAL_MINUTES` | `30` | 推送间隔（分钟），与 cron 保持一致 |
+| `INTERVAL_MINUTES` | `60` | 推送间隔（分钟），与 cron 保持一致 |
 | `NOTIFY_URL` | `https://notify.portcloud.online` | AgentNotify API 地址（兼容旧 `PC_URL`） |
 | `NOTIFY_TIMEOUT` | `60` | AgentNotify 轮询投递结果的总预算（秒），须为正整数（兼容旧 `PC_TIMEOUT`） |
 | `SMTP_HOST` | `smtp.qq.com` | 自定义 SMTP 服务器 |
@@ -112,8 +112,8 @@ npm run deploy
 
 | 推送间隔 | `INTERVAL_MINUTES` | cron（UTC） |
 |---|---|---|
-| 30 分钟（默认） | `30` | `*/30 * * * *` |
-| 1 小时 | `60` | `17 * * * *` |
+| 30 分钟 | `30` | `*/30 * * * *` |
+| 1 小时（默认） | `60` | `17 * * * *` |
 | 4 小时 | `240` | `17 */4 * * *` |
 
 > `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期。
@@ -123,8 +123,8 @@ npm run deploy
 ## 四、工作方式
 
 ```
-唤醒（Worker Cron，默认 */30 * * * * UTC）
-  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 30）则跳过
+唤醒（Worker Cron，默认 17 * * * * UTC）
+  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 60）则跳过
      └─ 抓取     FEED_PROXY 转换 RSS
         └─ 解析  时间窗口 / HTML 实体解码 / 剥离重复标题
            └─ 打标 Workers AI（env.AI）输出 tags + prices + 中文摘要

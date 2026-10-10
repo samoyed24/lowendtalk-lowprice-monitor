@@ -1,9 +1,9 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
-	// 每 30 分钟唤醒（UTC），与 INTERVAL_MINUTES 保持一致。
+	// 每小时第 17 分钟唤醒（UTC），与 INTERVAL_MINUTES 保持一致。
 	// 改推送间隔时同步改两处：这里的 cron 与下面的 INTERVAL_MINUTES。
 	"triggers": {
-		"crons": ["*/30 * * * *"]
+		"crons": ["17 * * * *"]
 	},
 	"name": "let-lowprice-monitor",
 	"main": "src/index.ts",
@@ -29,7 +29,7 @@
 		"MAX_POSTS": "60",
 		"CLASSIFY_BATCH_SIZE": "1",
 		"REQUIRE_SERVER_TAG": "true",
-		"INTERVAL_MINUTES": "30",
+		"INTERVAL_MINUTES": "60",
 		"NOTIFY_URL": "https://notify.portcloud.online",
 		"NOTIFY_TIMEOUT": "60",
 		"SMTP_HOST": "smtp.qq.com",
