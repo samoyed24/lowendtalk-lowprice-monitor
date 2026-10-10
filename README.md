@@ -66,7 +66,7 @@ npx wrangler secret put MAIL_TO     # 收件邮箱
 npm run deploy
 ```
 
-部署后 Cron 自动生效（默认每 30 分钟唤醒，UTC）。在 dashboard 的 Workers → Triggers → Cron Events 里能看到每次唤醒记录，`npx wrangler tail` 看实时日志。
+部署后 Cron 自动生效（默认每 30 分钟唤醒，UTC），无需在 dashboard 手动添加。首次创建或修改触发器[最多需要 15 分钟传播](https://developers.cloudflare.com/workers/configuration/cron-triggers/)，部署不会立即运行：需要等传播完成后的下一个整点或半点。在 dashboard 的 Workers → Settings → Trigger Events → View events 查看记录；新 Worker 的历史事件展示还可能延迟最多 30 分钟。`npx wrangler tail` 只看连接后的实时日志，不会补放历史调用。
 
 ## 二、配置项
 
@@ -86,7 +86,7 @@ npm run deploy
 
 | Variable | 默认值 | 说明 |
 |---|---|---|
-| `AI_MODEL` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Workers AI 模型（须是 AI 绑定支持的文本生成模型） |
+| `AI_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | Workers AI 模型；默认 Qwen3 30B A3B，调用时追加 `/no_think`，减少推理输出 |
 | `FEED_URL` | LET Offers 板块 RSS | 抓取源 |
 | `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
 | `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
@@ -148,7 +148,7 @@ npm run deploy
 
 正文读取 Feed 的 `content_text`，没有时从 `content_html` 去掉 HTML 标签；清理后的正文完整送入 AI，不再按字符数截断。它不会另外打开原帖页面：Feed 本身没提供的内容和图片里的文字仍无法据此总结。
 
-默认每次分析 1 帖，避免多篇完整正文挤占上下文；调用次数和总耗时会比批量处理更多。默认模型的[上下文上限为 24,000 tokens](https://developers.cloudflare.com/workers-ai/models/llama-3.3-70b-instruct-fp8-fast/)，还需为提示词和输出预留空间，因此单篇异常长文仍可能超限。本项目不自动分段；若 AI 接口报错，则按运行失败处理，而不是主动截断正文。
+默认每次分析 1 帖，避免多篇完整正文挤占上下文；调用次数和总耗时会比批量处理更多。默认模型的[上下文上限为 32,768 tokens](https://developers.cloudflare.com/workers-ai/models/qwen3-30b-a3b-fp8/)，还需为提示词和输出预留空间，因此单篇异常长文仍可能超限。本项目不自动分段；若 AI 接口报错，则按运行失败处理，而不是主动截断正文。
 
 中文摘要要求正文信息充足时写 150–300 字，覆盖商家与机房、主要套餐的配置及对应价格、网络与 IP、优惠码、首期/续费条件及限制。信息不足时允许更短，不补猜缺失参数；实际字数和准确性仍取决于模型输出。HTML 与纯文本邮件均保留完整摘要。已推送的帖子仍按原状态去重，不会因为修改摘要而重新发送。
 
@@ -189,6 +189,8 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 **Q：AI 模型想换一个？**
 
 改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可。部分模型需要 Workers Paid 计划或 AI Gateway 额度。
+
+默认 Qwen3 30B A3B 的单位 token 消耗比原来的 Llama 3.3 70B 更低，并使用 Qwen 的 [`/no_think` 软开关](https://qwenlm.github.io/blog/qwen3/) 请求非思考模式。更换模型不会重置免费额度：[每天 10,000 Neurons，UTC 零点重置](https://developers.cloudflare.com/workers-ai/platform/pricing/)。本地测试也会消耗远端额度；仅新增帖子进入 AI，但清空状态或发信失败后重跑可能重复分析。
 
 ---
 

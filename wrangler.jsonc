@@ -22,7 +22,7 @@
 	},
 	// 非敏感配置。secrets（NOTIFY_KEY / NOTIFY_TO / SMTP_*，兼容旧 PC_*）用 wrangler secret put 设置，不进版本库。
 	"vars": {
-		"AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		"AI_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
 		"FEED_URL": "https://lowendtalk.com/categories/offers/feed.rss",
 		"FEED_PROXY": "https://feed2json.org/convert?url={url}",
 		"LOOKBACK_DAYS": "7",

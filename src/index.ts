@@ -131,7 +131,7 @@ async function aiChatViaBinding(env: Env, model: string, system: string, user: s
 				{
 					messages: [
 						{ role: "system", content: system },
-						{ role: "user", content: user },
+						{ role: "user", content: model === "@cf/qwen/qwen3-30b-a3b-fp8" ? `${user}\n/no_think` : user },
 					],
 					temperature: 0,
 					max_tokens: 8000,
