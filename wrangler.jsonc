@@ -13,8 +13,10 @@
 		"enabled": true
 	},
 	// 已推送 URL 与上次运行时间存在这里，替代原来 Actions cache 的状态文件。
+	// 这里不写死 id：GitHub Actions 部署时会自动查找/创建 LET_STATE 并填入 id，
+	// 保证 fork 到自己账号也能直接用。本地部署请见 README「本地部署」一节。
 	"kv_namespaces": [
-		{ "binding": "STATE", "id": "b886d58de0f848e2b75f3d5c15a0b1ef" }
+		{ "binding": "STATE" }
 	],
 	// Workers AI 绑定：分类与摘要一律走这里，不再接外部 LLM 接口。
 	"ai": {

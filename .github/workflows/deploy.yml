@@ -1,0 +1,89 @@
+name: Deploy to Cloudflare Workers
+
+# 只支持手动触发：Fork 后填好 Secrets，在 Actions 里点一次即可。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # 可选：填了就复用这个 KV，不填则自动查找/创建 LET_STATE。
+      LET_STATE_KV_ID: ${{ vars.LET_STATE_KV_ID }}
+      # 可选：推送通道，填了才会写成 Worker secret（见 README）。
+      NOTIFY_KEY: ${{ secrets.NOTIFY_KEY }}
+      NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 校验必填参数
+        run: |
+          missing=""
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::缺少必填 Secrets:$missing（见 README 部署步骤）"
+            exit 1
+          fi
+          if [ -z "$NOTIFY_KEY" ] && [ -z "$SMTP_USER" ]; then
+            echo "::error::至少配置一个推送通道：NOTIFY_KEY + NOTIFY_TO，或 SMTP_USER + SMTP_PASS + MAIL_TO"
+            exit 1
+          fi
+          echo "参数校验通过"
+
+      - name: 运行测试
+        run: npm test
+
+      - name: 解析 STATE KV namespace
+        run: ./scripts/resolve-kv.sh
+
+      - name: 部署 Worker
+        run: npx wrangler deploy
+
+      - name: 写入 Worker secrets
+        run: |
+          tmp="$(mktemp)"
+          node -e '
+            const fs = require("node:fs");
+            const keys = ["NOTIFY_KEY", "NOTIFY_TO", "SMTP_USER", "SMTP_PASS", "MAIL_TO"];
+            const out = {};
+            for (const k of keys) if (process.env[k]) out[k] = process.env[k];
+            fs.writeFileSync(process.argv[1], JSON.stringify(out));
+          ' "$tmp"
+          count="$(node -e 'console.log(Object.keys(JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"))).length)' "$tmp")"
+          if [ "$count" = "0" ]; then
+            echo "::error::没有可写入的推送参数"
+            exit 1
+          fi
+          npx wrangler secret bulk "$tmp"
+          rm -f "$tmp"
+
+      - name: 部署结果
+        run: |
+          echo "### 部署完成 🎉" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: \`let-lowprice-monitor\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 定时: 每小时第 17 分钟（UTC）" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "其余参数（AI_MODEL、推送间隔、SMTP 端口等）在 \`wrangler.jsonc\` 里改，改完重跑本 workflow。" >> "$GITHUB_STEP_SUMMARY"
