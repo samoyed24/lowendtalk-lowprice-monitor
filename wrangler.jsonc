@@ -1,0 +1,36 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	// 每 4 小时在第 17 分钟唤醒（UTC），与 INTERVAL_MINUTES 保持一致。
+	// 改推送间隔时同步改两处：这里的 cron 与下面的 INTERVAL_MINUTES。
+	"triggers": {
+		"crons": ["17 */4 * * *"]
+	},
+	"name": "let-lowprice-monitor",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-10",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	// 已推送 URL 与上次运行时间存在这里，替代原来 Actions cache 的状态文件。
+	"kv_namespaces": [
+		{ "binding": "STATE", "id": "b886d58de0f848e2b75f3d5c15a0b1ef" }
+	],
+	// Workers AI 绑定：分类与摘要一律走这里，不再接外部 LLM 接口。
+	"ai": {
+		"binding": "AI"
+	},
+	// 非敏感配置。 secrets（PC_KEY / PC_TO）用 wrangler secret put 设置，不进版本库。
+	"vars": {
+		"AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+		"FEED_URL": "https://lowendtalk.com/categories/offers/feed.rss",
+		"FEED_PROXY": "https://feed2json.org/convert?url={url}",
+		"LOOKBACK_DAYS": "7",
+		"MAX_POSTS": "60",
+		"CLASSIFY_BATCH_SIZE": "10",
+		"REQUIRE_SERVER_TAG": "true",
+		"INTERVAL_MINUTES": "240",
+		"PC_URL": "https://notify.portcloud.online",
+		"PC_TIMEOUT": "60"
+	}
+}

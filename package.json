@@ -1,0 +1,1 @@
+{"devDependencies":{"@types/node":"^26.6.5","typescript":"^5.9.3","vitest":"^3.2.4","wrangler":"^4.107.1"},"name":"let-lowprice-monitor","private":true,"scripts":{"deploy":"wrangler deploy","dev":"wrangler dev","test":"vitest run","typecheck":"tsc --noEmit","types":"wrangler types"},"version":"1.0.0"}

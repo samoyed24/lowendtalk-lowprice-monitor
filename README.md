@@ -1,207 +1,172 @@
 # lowendtalk-lowprice-monitor
 
-定时抓取 [LowEndTalk](https://lowendtalk.com) 的 Offers 板块，用 AI 打标签并生成中文摘要，
-去重后把新增条目邮件推送。
+定时抓取 [LowEndTalk](https://lowendtalk.com) 的 Offers 板块，用 Workers AI 打标签并生成中文摘要，去重后把新增条目邮件推送。
 
-后端不限厂商 —— 兼容 OpenAI Chat Completions、OpenAI Responses、
-Anthropic Messages 三种接口格式的服务都可以接。
+跑在 **Cloudflare Worker Cron** 上：定时唤醒 → 抓取 → AI 打标 → 去重 → 发信。状态存在 KV，AI 走 Workers AI 绑定，发信走 Portcloud Notify。
 
 ---
 
 ## 目录
 
 - [一、快速开始](#一快速开始)
-  - [1. Fork 本仓库](#1-fork-本仓库)
-  - [2. 启用 Actions（关键，容易漏）](#2-启用-actions关键容易漏)
-  - [3. 配置 Secrets](#3-配置-secrets)
-  - [4. 手动触发一次](#4-手动触发一次)
-  - [5. 调整推送间隔](#5-调整推送间隔)
-- [二、本地运行](#二本地运行)
-- [三、配置项](#三配置项)
-- [四、标签](#四标签)
+- [二、配置项](#二配置项)
+- [三、推送间隔](#三推送间隔)
+- [四、手动触发](#四手动触发)
 - [五、工作方式](#五工作方式)
-- [六、常见问题](#六常见问题)
-- [七、已知限制](#七已知限制)
+- [六、本地开发](#六本地开发)
+- [七、常见问题](#七常见问题)
+- [八、已知限制](#八已知限制)
 
 ---
 
 ## 一、快速开始
 
-### 1. Fork 本仓库
+前置：Cloudflare 账号、`node >= 18`、已登录的 wrangler（`npx wrangler login`）。
 
-点本仓库右上角的 **Fork**，把它复制到你自己的账号下。
+```bash
+git clone <your-fork> && cd lowendtalk-lowprice-monitor
+npm install
+```
 
-> **为什么必须 Fork？**
-> 定时任务需要读取 secrets，而 secrets 只能配置在**你自己拥有写权限的仓库**里。
+### 1. 建自己的 KV（存状态用）
 
-### 2. 启用 Actions（关键，容易漏）
+```bash
+npx wrangler kv namespace create LET_STATE
+```
 
-Fork 之后，GitHub **默认不运行 fork 仓库里的 workflow**，定时任务不会执行。
+把输出的 `id` 填进 `wrangler.jsonc` 的 `kv_namespaces[0].id`（仓库里的是作者自己的，fork 后必须换掉，否则会读写到别人的库——实际上也写不进去，会直接报错）。
 
-进入你 fork 出来的仓库，点 **Actions** 标签页，点击
-**I understand my workflows, go ahead and enable them**。
+### 2. 设 secrets（不进版本库）
 
-若顶部出现黄色横幅，点右侧 **Enable workflow**。
+```bash
+npx wrangler secret put PC_KEY   # Portcloud 控制台创建的 API Key（pck_xxx）
+npx wrangler secret put PC_TO    # 收件邮箱（须与控制台验证过的地址一致）
+npx wrangler secret put CRON_SECRET  # 手动触发用的口令，自己编一个长的
+```
 
-> 这是 GitHub 的官方行为：*"Workflows don't run in forked repositories by default."*
-> 参考 [Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)。
+> 使用 Portcloud 前需先给该服务的 GitHub 仓库点一个 Star，否则调用返回 `403 STAR_REQUIRED`。在 [notify.portcloud.online](https://notify.portcloud.online) 用 GitHub 登录控制台，在**接收邮箱**里添加并验证地址，再在 **API Key** 里创建 Key（明文只展示一次）。
 
-### 3. 配置 Secrets
+### 3. 部署
 
-进入**你 fork 的仓库**，点 **Settings → Secrets and variables → Actions**。
+```bash
+npm run deploy
+```
 
-#### 模型服务（必填）
+部署后 Cron 自动生效（默认每 4 小时在第 17 分钟唤醒，UTC）。在 dashboard 的 Workers → Triggers → Cron Events 里能看到每次唤醒记录，`npx wrangler tail` 看实时日志。
 
-| Secret | 说明 |
-|---|---|
-| `LLM_API_KEY` | 模型服务的 API key |
+### 4. 验证
 
-模型地址与名称在 Variables 标签页配置，见[三、配置项](#三配置项)。
+先手动 dry-run（不发信、不改状态，返回将推送的内容）：
 
-#### 推送通道（至少配一个）
+```bash
+curl -X POST https://<你的worker>.workers.dev/__scheduled \
+  -H "Authorization: Bearer <CRON_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run": true, "limit": 20}'
+```
 
-**通道 1 —— Portcloud Notify（推荐）**
+确认内容无误后，真正跑一次：
 
-自己配 SMTP 比较麻烦（要开服务、申请授权码、处理各服务商的限制），
-建议直接用这个现成的托管服务。免费，几步就能用起来。
+```bash
+curl -X POST https://<你的worker>.workers.dev/__scheduled \
+  -H "Authorization: Bearer <CRON_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+```
 
-> **使用前需要先给该服务的 GitHub 仓库点一个 Star** ——
-> 服务端会校验你的 GitHub 账号是否已 Star，否则调用返回 `403 STAR_REQUIRED`。
-> 登录控制台后页面会提示并给出仓库链接。
+---
 
-**1.** 用 GitHub 登录 [notify.portcloud.online](https://notify.portcloud.online) 控制台
+## 二、配置项
 
-**2.** 在 **接收邮箱** 中添加收件邮箱并完成验证（只有验证过的地址才能收信）
-
-**3.** 在 **API Key** 中创建 Key —— 明文**只展示一次**，请立即复制保存
-
-**4.** 填入以下 secrets：
-
-| Secret | 说明 |
-|---|---|
-| `PC_KEY` | API Key，形如 `pck_xxx` |
-| `PC_TO` | 收件邮箱（须与上一步验证过的地址一致） |
-
-邮件以 `multipart/alternative` 发送（同时带 HTML 与纯文本正文），
-由客户端选择展示版本。
-
-> **异步两段式投递**：`POST /api/v1/send` 只受理（返回 `201` + `log_id`），
-> 程序在受理后等待 1 秒，再用 `GET /api/v1/send/{log_id}` 每隔 1 秒轮询，直到 `success` / `failed` / `rejected`。
-> 受理只请求一次、**不重试发送**（重试可能重复投递）；受理后的轮询预算由 `PC_TIMEOUT`（默认 60 秒）控制。
-> 短暂查询网络错误、HTTP 429 / 5xx 会在预算内继续查询。超时或无法确认状态时，报「投递结果未知」并且不保存状态，不代表邮件一定未送达。
-> 后续运行可能再次发送未记入状态的内容，产生重复邮件；可根据报错中的 `log_id` 在控制台核对。
-> 本地可设置 `PC_TIMEOUT=120 python src/monitor.py`；Actions 中设置同名 Variable。该设置不改变受理 POST 的 60 秒请求超时；查询请求按剩余预算限制连接/读取超时，但不保证精确的墙钟总耗时。
-
-**通道 2 —— SMTP 邮件**
-
-适合已有邮箱、且不想依赖第三方服务的场景。需**同时配置**下面三项：
+### Secrets（`wrangler secret put`，必填）
 
 | Secret | 说明 |
 |---|---|
-| `SMTP_USER` | 发件邮箱，如 `you@qq.com` |
-| `SMTP_PASS` | 邮箱**授权码**（不是登录密码） |
-| `MAIL_TO` | 收件邮箱 |
+| `PC_KEY` | Portcloud API Key，形如 `pck_xxx` |
+| `PC_TO` | 收件邮箱（与控制台验证过的地址一致） |
+| `CRON_SECRET` | 手动触发口令（`POST /__scheduled` 的 Bearer token） |
 
-> 两个通道都配置时会**同时发送**。只配一个也可以。
+### Vars（`wrangler.jsonc`，可选，都有默认值）
 
-### 4. 手动触发一次
+| Variable | 默认值 | 说明 |
+|---|---|---|
+| `AI_MODEL` | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Workers AI 模型（须是 AI 绑定支持的文本生成模型） |
+| `FEED_URL` | LET Offers 板块 RSS | 抓取源 |
+| `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
+| `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
+| `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
+| `CLASSIFY_BATCH_SIZE` | `10` | 单次 AI 分类的条数；帖子多时自动拆多批，避免一次返回过长被截断 |
+| `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
+| `INTERVAL_MINUTES` | `240` | 推送间隔（分钟），与 cron 保持一致 |
+| `PC_URL` | `https://notify.portcloud.online` | Portcloud API 地址 |
+| `PC_TIMEOUT` | `60` | Portcloud 轮询投递结果的总预算（秒），须为正整数 |
 
-Actions → LET Low-Price Monitor → **Run workflow**。
+> **异步两段式投递**：`POST /api/v1/send` 只受理（返回 `201` + `log_id`），程序在受理后等待 1 秒，再用 `GET /api/v1/send/{log_id}` 每隔 1 秒轮询，直到 `success` / `failed` / `rejected`。受理只请求一次、**不重试发送**（重试可能重复投递）；受理后的轮询预算由 `PC_TIMEOUT`（默认 60 秒）控制。短暂查询网络错误、HTTP 429 / 5xx 会在预算内继续查询。超时或无法确认状态时，报「投递结果未知」并且不保存状态，不代表邮件一定未送达；后续运行可能再次发送未记入状态的内容，产生重复邮件，可根据报错中的 `log_id` 在控制台核对。
 
-- **`dry_run`** —— 只抓取预览，不发信也不改状态，结果作为 artifact 上传。
-  建议先跑这个确认配置无误。
-- **`force`**（默认勾选）—— 忽略时间间隔立即执行。
+---
 
-### 5. 调整推送间隔
+## 三、推送间隔
 
-间隔**写死在代码里**，不通过 Variables 配置。默认每 4 小时一次，避开整点，在北京时间 00:17、04:17、08:17、12:17、16:17、20:17 触发（GitHub Actions 可能延迟启动）。要改需同步两处：
+间隔由两处共同决定，改动时**同步改两处**：
 
-1. `src/monitor.py` 的 `INTERVAL_MINUTES`（分钟）
-2. `.github/workflows/monitor.yml` 的 `cron`（唤醒频率）
+1. `wrangler.jsonc` 的 `triggers.crons`（唤醒频率，UTC）
+2. `wrangler.jsonc` 的 `INTERVAL_MINUTES`（分钟）
 
-| 推送间隔 | `INTERVAL_MINUTES` | cron |
+| 推送间隔 | `INTERVAL_MINUTES` | cron（UTC） |
 |---|---|---|
 | 30 分钟 | `30` | `*/30 * * * *` |
 | 1 小时 | `60` | `17 * * * *` |
 | 4 小时（默认） | `240` | `17 */4 * * *` |
 
-> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期，否则会有部分唤醒被浪费。
+> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期，否则会有部分唤醒被浪费。Cron 触发不保证精确到秒，高峰期可能延迟几分钟。
 
 ---
 
-## 二、本地运行
+## 四、手动触发
+
+`POST /__scheduled`，header 带 `Authorization: Bearer <CRON_SECRET>`，body（JSON，均可选）：
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `dry_run` | `false` | 只抓取并返回将推送的内容，不发信、不改状态 |
+| `force` | `true` | 是否忽略时间间隔立即执行；设 `false` 则受 `INTERVAL_MINUTES` 约束 |
+| `limit` | 不限 | 只处理前 N 条新增（调试用） |
 
 ```bash
-pip install -r requirements.txt
+# 预览（推荐先跑这个）
+curl -X POST https://<你的worker>.workers.dev/__scheduled \
+  -H "Authorization: Bearer <CRON_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run": true}'
 
-export LLM_API_KEY=... LLM_BASE_URL=... LLM_MODEL=...
-export PC_KEY=... PC_TO=...          # 或 SMTP_USER / SMTP_PASS / MAIL_TO
-
-python src/monitor.py --dry-run      # 预览写入 preview.html，不发信、不改状态
-python src/monitor.py --force        # 忽略间隔，立即执行
-python src/monitor.py                # 正常执行（受间隔约束，默认 240 分钟）
+# 立即执行一次
+curl -X POST https://<你的worker>.workers.dev/__scheduled \
+  -H "Authorization: Bearer <CRON_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
-> **验证配置时请一律用 `--dry-run`。** 真实运行会写状态文件，
-> 而删掉状态文件会让窗口内的帖子重新变成「新增」，导致重复发信。
+未设 `CRON_SECRET` 或口令不对时返回 `401`。
 
 ---
 
-## 三、配置项
+## 五、工作方式
 
-### Secrets
+```
+唤醒（Worker Cron，默认 17 */4 * * * UTC）
+  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 240）则跳过
+     └─ 抓取     FEED_PROXY 转换 RSS
+        └─ 解析  时间窗口 / HTML 实体解码 / 剥离重复标题
+           └─ 打标 Workers AI（env.AI）输出 tags + prices + 中文摘要
+              └─ 整理 按最低月均价排序
+                 └─ 去重 与 KV 状态比对，取新增
+                    └─ 发信 有新增才发送（Portcloud）
+                       └─ 存状态（KV）
+```
 
-见[配置 Secrets](#3-配置-secrets)。此外：
+状态（已推送 URL + 上次运行时间）存在 `STATE` KV 里。**投递成功后**才写状态；运行失败时状态不变，这批帖子下次重新处理。任何异常都会抛给 Cron（在 Cron Events 里记为失败），并发送一封 `🚨` 开头的告警邮件。
 
-| Secret | 默认 | 说明 |
-|---|---|---|
-| `SMTP_HOST` | `smtp.qq.com` | 也可配在 Variables |
-
-### Variables
-
-在 **Settings → Secrets and variables → Actions → Variables** 设置，全部可选：
-
-| Variable | 默认值 | 说明 |
-|---|---|---|
-| `LLM_BASE_URL` | `https://litellm.portcloud.online/v1` | 接口地址 |
-| `LLM_MODEL` | `cc/deepseek-v4.1-flash` | 模型名 |
-| `LLM_API_FORMAT` | `chat_completions` | 接口格式，见下 |
-| `PC_URL` | `https://notify.portcloud.online` | Portcloud API 地址 |
-| `PC_TIMEOUT` | `60` | Portcloud 轮询投递结果的总预算（秒），须为正整数 |
-| `SMTP_HOST` | `smtp.qq.com` | |
-| `SMTP_PORT` | `465` | |
-| `FEED_URL` | LET Offers 板块 RSS | 抓取源 |
-| `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
-| `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
-| `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
-| `CLASSIFY_BATCH_SIZE` | `10` | 单次 AI 分类的条数；帖子多时自动拆成多批，避免一次返回过长被截断 |
-| `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
-
-### 切换模型服务
-
-`LLM_API_FORMAT` 支持三种接口格式：
-
-| 取值 | 请求路径 | 认证头 |
-|---|---|---|
-| `chat_completions` | `/chat/completions` | `Authorization: Bearer` |
-| `responses` | `/responses` | `Authorization: Bearer` |
-| `anthropic` | `/messages` | `x-api-key` + `anthropic-version` |
-
-常见组合：
-
-| 服务 | `LLM_BASE_URL` | `LLM_MODEL` | `LLM_API_FORMAT` |
-|---|---|---|---|
-| OpenAI | `https://api.openai.com/v1` | `gpt-4o-mini` | `chat_completions` |
-| OpenAI（新接口） | `https://api.openai.com/v1` | `gpt-4o-mini` | `responses` |
-| Anthropic | `https://api.anthropic.com/v1` | `claude-sonnet-5` | `anthropic` |
-| Ollama | `http://localhost:11434/v1` | `qwen2.5:14b` | `chat_completions` |
-| LiteLLM 等网关 | 网关地址 | 网关侧模型名 | 按网关支持的格式 |
-
----
-
-## 四、标签
-
-每条帖子会被打上一组标签，并在邮件里以徽章展示。
+标签体系：每条帖子会被打上一组标签，并在邮件里以徽章展示。
 
 | 类别 | 取值 |
 |---|---|
@@ -209,60 +174,51 @@ python src/monitor.py                # 正常执行（受间隔约束，默认 2
 | 网络（可多选） | `ipv4`、`ipv6`、`家宽`、`回国优化`、`CN2`、`GIA`、`BGP`、`Anycast`、`大带宽`、`不限流量` |
 | 其他（可多选） | `高防`、`KVM`、`OpenVZ`、`LXC`、`Windows`、`GPU`、`独立IP`、`免费试用`、`抽奖` |
 
-帖子若同时涉及多种机型（如既卖 VPS 又卖独服），会同时打上多个类型标签。
-
-价格会提取帖子里出现的**所有档位**（最多 5 条），按金额从低到高排列，保留原币种与计费周期。
+价格提取帖子里出现的所有档位（最多 5 条），按金额从低到高排列，保留原币种与计费周期。
 
 ---
 
-## 五、工作方式
+## 六、本地开发
 
-```
-唤醒（cron）
-  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 240）则跳过
-     └─ 抓取     FEED_PROXY 转换 RSS
-        └─ 解析  时间窗口 / HTML 实体解码 / 剥离重复标题
-           └─ 打标 AI 输出 tags + prices + 中文摘要
-              └─ 整理 按最低月均价排序
-                 └─ 去重 与状态文件比对，取新增
-                    └─ 发信 有新增才发送
-                       └─ 存状态
+```bash
+npm test        # 单测（vitest）
+npm run typecheck  # tsc --noEmit
+npm run types   # 改完 wrangler.jsonc 后重新生成 Env 类型
+npm run dev     # 本地启动（Workers AI 绑定走远端，会产生用量计费）
+npx wrangler tail  # 看线上日志
 ```
 
-状态在**投递成功后**才写入。运行失败时状态不变，这批帖子会在下次运行重新处理。
-任何异常都会以非零码退出，并发送一封 `🚨` 开头的告警邮件。
+注意：Workers AI 在本地开发时也是远端调用，会产生用量费用。只改纯逻辑（解析/整理/邮件模板）时跑 `npm test` 即可，不需要起 dev。
 
 ---
 
-## 六、常见问题
+## 七、常见问题
 
 **Q：跑完了但没收到邮件？**
 
-有新增才会发信。若本次没有新帖，会静默退出（日志里是「0 条是新增」）。
-先看 Actions 的运行日志确认。
+有新增才会发信。若本次没有新帖，会静默退出（日志里是「0 条是新增」）。先看 `wrangler tail` 或 dashboard 日志确认。
 
-**Q：想临时停掉，但不想删 secrets？**
+**Q：想临时停掉？**
 
-Actions → 选中 workflow → 右上角 **⋯ → Disable workflow**。
+dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Trigger 暂停即可；或直接 `npx wrangler deploy` 一个去掉 `triggers.crons` 的配置。
 
 **Q：邮件里出现了 SSL 证书、控制面板这类内容？**
 
-这些是 Offers 板块里混着的非服务器帖子。默认已过滤
-（`REQUIRE_SERVER_TAG=true`），置为 `false` 可一并推送。
+这些是 Offers 板块里混着的非服务器帖子。默认已过滤（`REQUIRE_SERVER_TAG=true`），置为 `false` 可一并推送。
 
-**Q：上游有更新，怎么同步到我的 fork？**
+**Q：从旧的 GitHub Actions 版迁移过来，状态怎么办？**
 
-在 fork 的仓库页面点 **Sync fork → Update branch**。
+状态存的地方变了（Actions cache → KV），旧状态带不过来。首次运行会把窗口内（默认 7 天）的帖子全当新增推一次，之后恢复正常。建议先用 `dry_run` 看一眼量，觉得太多可以先把 `LOOKBACK_DAYS` 调小跑一次，再调回来。
+
+**Q：AI 模型想换一个？**
+
+改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可（如 `@cf/openai/gpt-oss-120b`、`@cf/meta/llama-3.1-8b-instruct-fp8`）。注意部分模型需要 Workers Paid 计划或 AI Gateway 额度，换完先 dry-run 验证输出格式。
 
 ---
 
-## 七、已知限制
+## 八、已知限制
 
-- **抓取依赖 `feed2json.org`**：LET 前面有 Cloudflare，直连返回 403，
-  只能经该第三方服务转换 RSS。服务不可用时抓取失败，会发告警邮件。
-  换用可直接访问的源站时，把 `FEED_PROXY` 设为 `{url}` 即可绕过。
-- **状态存在 Actions cache 中**：cache 超过 7 天未被访问会被清理。
-  正常运行不会触发；若仓库长期停用后重新启用，窗口内的帖子可能被重复推送一次。
-- **标签与价格由 AI 判定**：均可能出错，尤其是价格仅出现在图片中、
-  或只写「联系报价」的帖子。
-- **GitHub Actions 的定时任务不保证准时**：高峰期可能延迟数分钟到数十分钟。
+- **抓取依赖 `feed2json.org`**：LET 前面有 Cloudflare，直连返回 403，只能经该第三方服务转换 RSS。服务不可用时抓取失败，会发告警邮件。换用可直接访问的源站时，把 `FEED_PROXY` 设为 `{url}` 即可绕过。
+- **标签与价格由 AI 判定**：均可能出错，尤其是价格仅出现在图片中、或只写「联系报价」的帖子。
+- **Cron 不保证精确准时**：高峰期可能延迟数分钟。
+- **Worker 无原生 SMTP**：只保留 Portcloud 通道，原来的 SMTP 配置已删除。
