@@ -20,10 +20,15 @@ function cfg(): MonitorConfig {
 		requireServerTag: true,
 		intervalMinutes: 240,
 		aiModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-		pcUrl: "https://notify.portcloud.online",
-		pcKey: "k",
-		pcTo: "to@example.com",
-		pcTimeout: 60,
+		notifyUrl: "https://notify.portcloud.online",
+		notifyKey: "k",
+		notifyTo: "to@example.com",
+		notifyTimeout: 60,
+		smtpHost: "",
+		smtpPort: 465,
+		smtpUser: "",
+		smtpPass: "",
+		smtpTo: "",
 	};
 }
 

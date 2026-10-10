@@ -21,10 +21,15 @@ function cfg(over: Partial<MonitorConfig> = {}): MonitorConfig {
 		requireServerTag: true,
 		intervalMinutes: 240,
 		aiModel: "m",
-		pcUrl: "https://notify.portcloud.online",
-		pcKey: "k",
-		pcTo: "to@example.com",
-		pcTimeout: 60,
+		notifyUrl: "https://notify.portcloud.online",
+		notifyKey: "k",
+		notifyTo: "to@example.com",
+		notifyTimeout: 60,
+		smtpHost: "",
+		smtpPort: 465,
+		smtpUser: "",
+		smtpPass: "",
+		smtpTo: "",
 		...over,
 	};
 }
@@ -177,8 +182,88 @@ describe("runPipeline 状态守卫", () => {
 		expect(h.saved).toHaveLength(0);
 	});
 
-	it("缺 PC_KEY 直接报错", async () => {
+	it("无任何通道直接报错", async () => {
 		const h = handlers();
-		await expect(runPipeline(cfg({ pcKey: "" }), {}, h, quiet)).rejects.toThrow(/PC_KEY/);
+		await expect(
+			runPipeline(cfg({ notifyKey: "", smtpUser: "" }), {}, h, quiet),
+		).rejects.toThrow(/发信通道/);
+	});
+});
+
+describe("sendMail 双通道", () => {
+	function notifyFetch(order: string[]) {
+		return (async (url: string) => {
+			if (String(url).endsWith("/api/v1/send")) {
+				order.push("notify");
+				return new Response(JSON.stringify({ log_id: 1 }), { status: 201 });
+			}
+			return new Response(
+				JSON.stringify({ log_id: 1, status: "success", failure_reason: null }),
+				{ status: 200 },
+			);
+		}) as typeof fetch;
+	}
+
+	function tickClock() {
+		let t = 0;
+		return () => (t += 2000);
+	}
+
+	it("只配 AgentNotify 则只走 AgentNotify", async () => {
+		const { sendMail } = await import("../src/monitor");
+		const order: string[] = [];
+		await sendMail("s", "h", "t", cfg(), {
+			fetchImpl: notifyFetch(order),
+			sleep: async () => {},
+			nowMs: tickClock(),
+			log: () => {},
+		});
+		expect(order).toEqual(["notify"]);
+	});
+
+	it("两个都配则同时发送", async () => {
+		const { sendMail } = await import("../src/monitor");
+		const order: string[] = [];
+		const c = cfg({
+			smtpHost: "smtp.example.com",
+			smtpUser: "me@example.com",
+			smtpPass: "p",
+			smtpTo: "to@example.com",
+		});
+		await sendMail("s", "h", "t", c, {
+			fetchImpl: notifyFetch(order),
+			sleep: async () => {},
+			nowMs: tickClock(),
+			log: () => {},
+			smtpDialer: {
+				dial: async () => {
+					order.push("smtp");
+					const script = [
+						{ code: 220, text: "ready" },
+						{ code: 250, text: "hello\nAUTH LOGIN" },
+						{ code: 334, text: "Username:" },
+						{ code: 334, text: "Password:" },
+						{ code: 235, text: "ok" },
+						{ code: 250, text: "ok" },
+						{ code: 250, text: "ok" },
+						{ code: 354, text: "go" },
+						{ code: 250, text: "queued" },
+						{ code: 221, text: "bye" },
+					];
+					return {
+						readResponse: async () => {
+							const next = script.shift();
+							if (!next) throw new Error("smtp script exhausted");
+							return next;
+						},
+						writeLine: async () => {},
+						writeData: async () => {},
+						upgradeTls: async () => {},
+						close: async () => {},
+					};
+				},
+			},
+		});
+		expect(order).toEqual(["notify", "smtp"]);
 	});
 });

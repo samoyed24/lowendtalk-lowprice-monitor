@@ -20,7 +20,7 @@
 	"ai": {
 		"binding": "AI"
 	},
-	// 非敏感配置。 secrets（PC_KEY / PC_TO）用 wrangler secret put 设置，不进版本库。
+	// 非敏感配置。secrets（NOTIFY_KEY / NOTIFY_TO / SMTP_*，兼容旧 PC_*）用 wrangler secret put 设置，不进版本库。
 	"vars": {
 		"AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
 		"FEED_URL": "https://lowendtalk.com/categories/offers/feed.rss",
@@ -30,7 +30,9 @@
 		"CLASSIFY_BATCH_SIZE": "10",
 		"REQUIRE_SERVER_TAG": "true",
 		"INTERVAL_MINUTES": "240",
-		"PC_URL": "https://notify.portcloud.online",
-		"PC_TIMEOUT": "60"
+		"NOTIFY_URL": "https://notify.portcloud.online",
+		"NOTIFY_TIMEOUT": "60",
+		"SMTP_HOST": "smtp.qq.com",
+		"SMTP_PORT": "465"
 	}
 }

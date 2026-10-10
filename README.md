@@ -2,7 +2,7 @@
 
 定时抓取 [LowEndTalk](https://lowendtalk.com) 的 Offers 板块，用 Workers AI 打标签并生成中文摘要，去重后把新增条目邮件推送。
 
-跑在 **Cloudflare Worker Cron** 上：定时唤醒 → 抓取 → AI 打标 → 去重 → 发信。状态存在 KV，AI 走 Workers AI 绑定，发信走 Portcloud Notify。
+跑在 **Cloudflare Worker Cron** 上：定时唤醒 → 抓取 → AI 打标 → 去重 → 发信。状态存在 KV，AI 走 Workers AI 绑定，发信走 AgentNotify（推荐）或自定义 SMTP。
 
 ---
 
@@ -38,13 +38,31 @@ npx wrangler kv namespace create LET_STATE
 
 ### 2. 设 secrets（不进版本库）
 
+推送通道至少配一个，都配则同时发送：
+
+**通道 1 —— AgentNotify（推荐）**
+
 ```bash
-npx wrangler secret put PC_KEY   # Portcloud 控制台创建的 API Key（pck_xxx）
-npx wrangler secret put PC_TO    # 收件邮箱（须与控制台验证过的地址一致）
-npx wrangler secret put CRON_SECRET  # 手动触发用的口令，自己编一个长的
+npx wrangler secret put NOTIFY_KEY   # AgentNotify 控制台创建的 API Key（pck_xxx）
+npx wrangler secret put NOTIFY_TO    # 收件邮箱（须与控制台验证过的地址一致）
 ```
 
-> 使用 Portcloud 前需先给该服务的 GitHub 仓库点一个 Star，否则调用返回 `403 STAR_REQUIRED`。在 [notify.portcloud.online](https://notify.portcloud.online) 用 GitHub 登录控制台，在**接收邮箱**里添加并验证地址，再在 **API Key** 里创建 Key（明文只展示一次）。
+> 使用前需先给该服务的 GitHub 仓库点一个 Star，否则调用返回 `403 STAR_REQUIRED`。在 [notify.portcloud.online](https://notify.portcloud.online) 用 GitHub 登录控制台，在**接收邮箱**里添加并验证地址，再在 **API Key** 里创建 Key（明文只展示一次）。
+> 旧的 `PC_KEY` / `PC_TO` 仍兼容（作为 fallback 读取），新部署建议用 `NOTIFY_*`。
+
+**通道 2 —— 自定义 SMTP**
+
+```bash
+npx wrangler secret put SMTP_USER   # 发件邮箱，如 you@qq.com
+npx wrangler secret put SMTP_PASS   # 邮箱授权码（不是登录密码）
+npx wrangler secret put MAIL_TO     # 收件邮箱
+```
+
+端口用 465（隐式 TLS，默认）或 587（STARTTLS）；25 被 Cloudflare 禁止出站。`SMTP_HOST` / `SMTP_PORT` 在 vars 里改，默认 `smtp.qq.com:465`。
+
+```bash
+npx wrangler secret put CRON_SECRET  # 手动触发用的口令，自己编一个长的
+```
 
 ### 3. 部署
 
@@ -78,13 +96,18 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 
 ## 二、配置项
 
-### Secrets（`wrangler secret put`，必填）
+### Secrets（`wrangler secret put`）
 
-| Secret | 说明 |
-|---|---|
-| `PC_KEY` | Portcloud API Key，形如 `pck_xxx` |
-| `PC_TO` | 收件邮箱（与控制台验证过的地址一致） |
-| `CRON_SECRET` | 手动触发口令（`POST /__scheduled` 的 Bearer token） |
+| Secret | 必填 | 说明 |
+|---|---|---|
+| `NOTIFY_KEY` | 通道 1 | AgentNotify API Key，形如 `pck_xxx`（兼容旧 `PC_KEY`） |
+| `NOTIFY_TO` | 通道 1 | 收件邮箱（与控制台验证过的地址一致；兼容旧 `PC_TO`） |
+| `SMTP_USER` | 通道 2 | 发件邮箱，如 `you@qq.com` |
+| `SMTP_PASS` | 通道 2 | 邮箱授权码（不是登录密码） |
+| `MAIL_TO` | 通道 2 | 收件邮箱 |
+| `CRON_SECRET` | 是 | 手动触发口令（`POST /__scheduled` 的 Bearer token） |
+
+两个通道至少配一个，都配则同时发送。
 
 ### Vars（`wrangler.jsonc`，可选，都有默认值）
 
@@ -98,10 +121,12 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 | `CLASSIFY_BATCH_SIZE` | `10` | 单次 AI 分类的条数；帖子多时自动拆多批，避免一次返回过长被截断 |
 | `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
 | `INTERVAL_MINUTES` | `240` | 推送间隔（分钟），与 cron 保持一致 |
-| `PC_URL` | `https://notify.portcloud.online` | Portcloud API 地址 |
-| `PC_TIMEOUT` | `60` | Portcloud 轮询投递结果的总预算（秒），须为正整数 |
+| `NOTIFY_URL` | `https://notify.portcloud.online` | AgentNotify API 地址（兼容旧 `PC_URL`） |
+| `NOTIFY_TIMEOUT` | `60` | AgentNotify 轮询投递结果的总预算（秒），须为正整数（兼容旧 `PC_TIMEOUT`） |
+| `SMTP_HOST` | `smtp.qq.com` | 自定义 SMTP 服务器 |
+| `SMTP_PORT` | `465` | 465（隐式 TLS）或 587（STARTTLS）；25 被 Cloudflare 禁止 |
 
-> **异步两段式投递**：`POST /api/v1/send` 只受理（返回 `201` + `log_id`），程序在受理后等待 1 秒，再用 `GET /api/v1/send/{log_id}` 每隔 1 秒轮询，直到 `success` / `failed` / `rejected`。受理只请求一次、**不重试发送**（重试可能重复投递）；受理后的轮询预算由 `PC_TIMEOUT`（默认 60 秒）控制。短暂查询网络错误、HTTP 429 / 5xx 会在预算内继续查询。超时或无法确认状态时，报「投递结果未知」并且不保存状态，不代表邮件一定未送达；后续运行可能再次发送未记入状态的内容，产生重复邮件，可根据报错中的 `log_id` 在控制台核对。
+> **异步两段式投递**（AgentNotify）：`POST /api/v1/send` 只受理（返回 `201` + `log_id`），程序在受理后等待 1 秒，再用 `GET /api/v1/send/{log_id}` 每隔 1 秒轮询，直到 `success` / `failed` / `rejected`。受理只请求一次、**不重试发送**（重试可能重复投递）；受理后的轮询预算由 `NOTIFY_TIMEOUT`（默认 60 秒）控制。短暂查询网络错误、HTTP 429 / 5xx 会在预算内继续查询。超时或无法确认状态时，报「投递结果未知」并且不保存状态，不代表邮件一定未送达；后续运行可能再次发送未记入状态的内容，产生重复邮件，可根据报错中的 `log_id` 在控制台核对。
 
 ---
 
@@ -160,7 +185,7 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
            └─ 打标 Workers AI（env.AI）输出 tags + prices + 中文摘要
               └─ 整理 按最低月均价排序
                  └─ 去重 与 KV 状态比对，取新增
-                    └─ 发信 有新增才发送（Portcloud）
+                    └─ 发信 有新增才发送（AgentNotify / 自定义 SMTP，配了几个发几个）
                        └─ 存状态（KV）
 ```
 
@@ -221,4 +246,4 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 - **抓取依赖 `feed2json.org`**：LET 前面有 Cloudflare，直连返回 403，只能经该第三方服务转换 RSS。服务不可用时抓取失败，会发告警邮件。换用可直接访问的源站时，把 `FEED_PROXY` 设为 `{url}` 即可绕过。
 - **标签与价格由 AI 判定**：均可能出错，尤其是价格仅出现在图片中、或只写「联系报价」的帖子。
 - **Cron 不保证精确准时**：高峰期可能延迟数分钟。
-- **Worker 无原生 SMTP**：只保留 Portcloud 通道，原来的 SMTP 配置已删除。
+- **自定义 SMTP 走 TCP sockets**：25 端口被 Cloudflare 禁止出站，只能用 465（隐式 TLS）或 587（STARTTLS）；协议是手写的 `EHLO → AUTH LOGIN → DATA`，QQ 邮箱请用授权码。

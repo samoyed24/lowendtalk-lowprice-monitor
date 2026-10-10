@@ -1,11 +1,11 @@
-// LowEndTalk 低价监控 Worker 入口：Cron 定时 → pipeline → KV 状态 → Portcloud 发信。
+// LowEndTalk 低价监控 Worker 入口：Cron 定时 → pipeline → KV 状态 → 发信。
 //
 // 定时：wrangler.jsonc 的 triggers.crons（默认 17 */4 * * *，UTC）。
 // 状态：STATE KV（sent 已推送 URL + lastRun），替代原来 Actions cache 的状态文件。
 // AI：Workers AI 绑定（env.AI），不再接外部 LLM 接口。
-// 发信：只留 Portcloud（Worker 无原生 SMTP）。
+// 发信：AgentNotify（推荐）与自定义 SMTP 双通道，至少配一个，都配则同时发送。
 
-import { PortcloudUnconfirmed, buildAlert, runPipeline, sendViaPortcloud } from "./monitor";
+import { NotifyUnconfirmed, buildAlert, runPipeline, sendMail } from "./monitor";
 import type { Deps, MonitorConfig, PipelineState, RunHandlers } from "./monitor";
 // ---- 定时入口 ----
 
@@ -42,11 +42,32 @@ function readInt(raw: string | undefined, fallback: number): number {
 	return Number.isFinite(n) ? n : fallback;
 }
 
-type AppEnv = Env & { PC_KEY?: string; PC_TO?: string; CRON_SECRET?: string };
+type AppEnv = Env & {
+	NOTIFY_URL?: string;
+	NOTIFY_TIMEOUT?: string;
+	NOTIFY_KEY?: string;
+	NOTIFY_TO?: string;
+	PC_URL?: string;
+	PC_TIMEOUT?: string;
+	PC_KEY?: string;
+	PC_TO?: string;
+	SMTP_HOST?: string;
+	SMTP_PORT?: string;
+	SMTP_USER?: string;
+	SMTP_PASS?: string;
+	MAIL_TO?: string;
+	CRON_SECRET?: string;
+};
+
+function envStr(env: AppEnv, key: "NOTIFY_KEY" | "NOTIFY_TO" | "PC_KEY" | "PC_TO" | "SMTP_USER" | "SMTP_PASS" | "MAIL_TO"): string {
+	const v = env[key];
+	return typeof v === "string" ? v : "";
+}
 
 function buildConfig(env: AppEnv): MonitorConfig {
 	const requireTag = String(env.REQUIRE_SERVER_TAG);
-	const pcTimeoutRaw = readInt(String(env.PC_TIMEOUT), 60);
+	const notifyTimeoutRaw = readInt(String(env.NOTIFY_TIMEOUT ?? env.PC_TIMEOUT), 60);
+	const smtpPortRaw = readInt(String(env.SMTP_PORT ?? "465"), 465);
 	return {
 		feedUrl: String(env.FEED_URL),
 		feedProxy: String(env.FEED_PROXY),
@@ -56,10 +77,15 @@ function buildConfig(env: AppEnv): MonitorConfig {
 		requireServerTag: requireTag !== "false" && requireTag !== "0",
 		intervalMinutes: readInt(String(env.INTERVAL_MINUTES), 240),
 		aiModel: String(env.AI_MODEL),
-		pcUrl: String(env.PC_URL || "https://notify.portcloud.online").replace(/\/+$/, ""),
-		pcKey: env.PC_KEY ?? "",
-		pcTo: env.PC_TO ?? "",
-		pcTimeout: pcTimeoutRaw > 0 ? pcTimeoutRaw : 60,
+		notifyUrl: String(env.NOTIFY_URL ?? env.PC_URL ?? "https://notify.portcloud.online").replace(/\/+$/, ""),
+		notifyKey: envStr(env, "NOTIFY_KEY") || envStr(env, "PC_KEY"),
+		notifyTo: envStr(env, "NOTIFY_TO") || envStr(env, "PC_TO"),
+		notifyTimeout: notifyTimeoutRaw > 0 ? notifyTimeoutRaw : 60,
+		smtpHost: String(env.SMTP_HOST ?? "smtp.qq.com"),
+		smtpPort: smtpPortRaw > 0 ? smtpPortRaw : 465,
+		smtpUser: envStr(env, "SMTP_USER"),
+		smtpPass: envStr(env, "SMTP_PASS"),
+		smtpTo: envStr(env, "MAIL_TO"),
 	};
 }
 
@@ -144,7 +170,7 @@ async function handleCron(env: Env, cron: string, d: CronDeps): Promise<void> {
 		loadState: d.loadState ?? (() => loadStateFromKv(env)),
 		saveState: d.saveState ?? ((state) => env.STATE.put(STATE_KEY, JSON.stringify(state))),
 		aiChat: d.aiChat ?? ((system, user) => aiChatViaBinding(env, cfg.aiModel, system, user)),
-		send: d.sendMail ?? ((subject, html, text) => sendViaPortcloud(subject, html, text, cfg, d)),
+		send: d.sendMail ?? ((subject, html, text) => sendMail(subject, html, text, cfg, d)),
 	};
 	try {
 		const result = await runPipeline(cfg, {}, handlers, d);
@@ -202,7 +228,7 @@ async function handleManualTrigger(request: Request, env: Env): Promise<Response
 		loadState: () => loadStateFromKv(env),
 		saveState: (state) => env.STATE.put(STATE_KEY, JSON.stringify(state)),
 		aiChat: (system, user) => aiChatViaBinding(env, cfg.aiModel, system, user),
-		send: (subject, html, text) => sendViaPortcloud(subject, html, text, cfg, deps),
+		send: (subject, html, text) => sendMail(subject, html, text, cfg, deps),
 	};
 	try {
 		const result = await runPipeline(
@@ -224,7 +250,7 @@ async function handleManualTrigger(request: Request, env: Env): Promise<Response
 	} catch (exc) {
 		const err = `${exc instanceof Error ? exc.constructor.name : typeof exc}: ${exc instanceof Error ? exc.message : String(exc)}`;
 		console.error(JSON.stringify({ scope: "manual", msg: `运行失败: ${err}` }));
-		if (exc instanceof PortcloudUnconfirmed) {
+		if (exc instanceof NotifyUnconfirmed) {
 			return Response.json({ error: "投递结果未知", detail: err }, { status: 502 });
 		}
 		return Response.json({ error: err }, { status: 500 });
