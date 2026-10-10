@@ -29,15 +29,13 @@ cd lowendtalk-lowprice-monitor
 npm install
 ```
 
-> Worker 跑在你自己的 Cloudflare 账号下（KV、secrets、Cron 全归你），不需要 Fork 也能用；想改代码再 Fork。
-
 ### 1. 建自己的 KV（存状态用）
 
 ```bash
 npx wrangler kv namespace create LET_STATE
 ```
 
-把输出的 `id` 填进 `wrangler.jsonc` 的 `kv_namespaces[0].id`（仓库里的是作者自己的，必须换成你自己的，否则会读写失败）。
+把输出的 `id` 填进 `wrangler.jsonc` 的 `kv_namespaces[0].id`。
 
 ### 2. 设 secrets（不进版本库）
 
@@ -146,7 +144,7 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 | 1 小时 | `60` | `17 * * * *` |
 | 4 小时（默认） | `240` | `17 */4 * * *` |
 
-> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期，否则会有部分唤醒被浪费。Cron 触发不保证精确到秒，高峰期可能延迟几分钟。
+> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期。
 
 ---
 
@@ -216,7 +214,7 @@ npm run dev     # 本地启动（Workers AI 绑定走远端，会产生用量计
 npx wrangler tail  # 看线上日志
 ```
 
-注意：Workers AI 在本地开发时也是远端调用，会产生用量费用。只改纯逻辑（解析/整理/邮件模板）时跑 `npm test` 即可，不需要起 dev。
+> Workers AI 在本地开发时也是远端调用，会产生用量费用。
 
 ---
 
@@ -240,7 +238,7 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 
 **Q：AI 模型想换一个？**
 
-改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可（如 `@cf/openai/gpt-oss-120b`、`@cf/meta/llama-3.1-8b-instruct-fp8`）。注意部分模型需要 Workers Paid 计划或 AI Gateway 额度，换完先 dry-run 验证输出格式。
+改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可。部分模型需要 Workers Paid 计划或 AI Gateway 额度，换完先 dry-run 验证。
 
 ---
 
