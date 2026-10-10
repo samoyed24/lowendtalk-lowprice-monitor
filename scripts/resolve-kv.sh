@@ -42,7 +42,14 @@ if [[ -n "${LET_STATE_KV_ID:-}" ]]; then
 fi
 
 echo "查询账号中的 KV namespace（title=${KV_TITLE}）..."
-existing="$(npx --no-install wrangler kv namespace list 2>/dev/null || true)"
+list_err="$(mktemp)"
+if ! existing="$(npx --no-install wrangler kv namespace list 2>"$list_err")"; then
+	echo "::error::wrangler kv namespace list 失败，无法确认 KV 是否已存在，已中止（避免重复创建）：" >&2
+	head -c 500 "$list_err" >&2
+	rm -f "$list_err"
+	exit 1
+fi
+rm -f "$list_err"
 
 found_id="$(printf '%s' "$existing" | KV_TITLE="$KV_TITLE" node -e '
 	let input = "";
