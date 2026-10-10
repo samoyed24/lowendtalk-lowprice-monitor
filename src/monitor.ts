@@ -68,6 +68,9 @@ export interface FeedData {
 
 const UA = "lowendtalk-lowprice-monitor/1.0 (+https://github.com/samoyed24)";
 const STATE_MAX = 5000;
+// 「距上次运行是否满 INTERVAL_MINUTES」允许的提前量：cron 派发本身有抖动，
+// 取 5 分钟远小于最小 cron 周期（30 分钟），不会让两个相邻周期都放行。
+const DUE_TOLERANCE_MS = 5 * 60_000;
 const NOTIFY_REQUEST_TIMEOUT_MS = 60_000;
 const NOTIFY_POLL_INTERVAL_MS = 1000;
 
@@ -823,9 +826,15 @@ export function dueSinceLastRun(
 	if (state.lastRun === undefined) return { due: true, reason: "no-lastRun" };
 	const prev = Date.parse(state.lastRun);
 	if (Number.isNaN(prev)) return { due: true, reason: "bad-lastRun" };
-	const elapsedMin = (now - prev) / 60000;
-	if (elapsedMin < cfg.intervalMinutes) {
-		return { due: false, reason: `距上次运行仅 ${elapsedMin.toFixed(0)} 分钟，未达 ${cfg.intervalMinutes} 分钟间隔，跳过` };
+	// cron 派发有抖动（实测 scheduledTime 会偏离整点几十秒），若严格比较「必须满 N 分钟」，
+	// 相邻两次触发的间隔会在 N 分钟附近来回摆，出现本该运行却跳过、实际变成隔次运行。
+	// 因此给一个远小于最小 cron 周期（30 分钟）的容差，让「按周期触发」稳定放行。
+	const elapsedMs = now - prev;
+	if (elapsedMs < cfg.intervalMinutes * 60_000 - DUE_TOLERANCE_MS) {
+		return {
+			due: false,
+			reason: `距上次运行仅 ${(elapsedMs / 60000).toFixed(0)} 分钟，未达 ${cfg.intervalMinutes} 分钟间隔，跳过`,
+		};
 	}
 	return { due: true, reason: "interval-reached" };
 }

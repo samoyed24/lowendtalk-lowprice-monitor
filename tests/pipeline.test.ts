@@ -64,6 +64,34 @@ describe("dueSinceLastRun", () => {
 			expect(due.due).toBe(true);
 		}
 	});
+
+	it("cron 派发抖动（实测 scheduledTime 偏离整点几十秒）不应导致隔次运行", () => {
+		const c = cfg({ intervalMinutes: 60 });
+		const base = Date.parse("2026-10-10T00:00:00Z");
+		// 实测：17:17 的 cron 实际在 17:17:55 派发，即比整点晚 55 秒。
+		// 这种抖动下两次触发的间隔会在 3600s 上下摆动，必须每次都放行。
+		const offsets = [55_000, 0, 12_000, 48_000, 3_000, 30_000];
+		let prev = null;
+		for (let i = 0; i < offsets.length; i++) {
+			const fire = base + i * 3600_000 + (offsets[i] ?? 0);
+			const state: PipelineState = prev === null ? { sent: [] } : { sent: [], lastRun: prev };
+			const due = dueSinceLastRun(state, c, { nowMs: fire });
+			expect(due.due).toBe(true);
+			prev = new Date(fire).toISOString();
+		}
+	});
+
+	it("容差不影响「未到间隔」的判断", () => {
+		const c = cfg({ intervalMinutes: 30 });
+		const now = Date.parse("2026-10-10T12:00:00Z");
+		// 30 分钟间隔 + 5 分钟容差 → 实际阈值 25 分钟。
+		// 24 分钟仍跳过
+		const tooSoon: PipelineState = { sent: [], lastRun: new Date(now - 24 * 60_000).toISOString() };
+		expect(dueSinceLastRun(tooSoon, c, { nowMs: now }).due).toBe(false);
+		// 26 分钟已过阈值，放行
+		const atTolerance: PipelineState = { sent: [], lastRun: new Date(now - 26 * 60_000).toISOString() };
+		expect(dueSinceLastRun(atTolerance, c, { nowMs: now }).due).toBe(true);
+	});
 });
 
 describe("parsePosts", () => {
