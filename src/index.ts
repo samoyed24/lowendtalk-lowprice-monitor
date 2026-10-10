@@ -69,7 +69,7 @@ function buildConfig(env: AppEnv): MonitorConfig {
 		feedProxy: String(env.FEED_PROXY),
 		lookbackDays: readInt(String(env.LOOKBACK_DAYS), 7),
 		maxPosts: readInt(String(env.MAX_POSTS), 60),
-		classifyBatchSize: readInt(String(env.CLASSIFY_BATCH_SIZE), 10),
+		classifyBatchSize: readInt(String(env.CLASSIFY_BATCH_SIZE), 1),
 		requireServerTag: requireTag !== "false" && requireTag !== "0",
 		intervalMinutes: readInt(String(env.INTERVAL_MINUTES), 240),
 		aiModel: String(env.AI_MODEL),

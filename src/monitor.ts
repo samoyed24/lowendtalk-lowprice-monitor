@@ -91,8 +91,16 @@ export const SYSTEM_PROMPT = [
 	"  · amount 只填数字；currency 填 USD / EUR / CNY 等，不确定填 null",
 	"  · period 只能是 month | year | quarter | half-year | one-time | unknown",
 	"",
-	"zh：中文摘要，40 字以内，说清「什么机器 + 什么配置 + 什么价位」。",
+	"zh：中文详细摘要，写成 3–5 个完整短句，正文信息充足时必须写 150–300 字，不要只写一句概述。",
+	"  · 按「商家与机房 → 具体套餐配置和价格 → 网络与 IP → 优惠和限制」的顺序组织，缺失的部分略过，信息少时允许更短，不凑字数。",
+	"  · 写清 CPU 型号 / 核数、内存、存储容量与类型、带宽 / 流量、IP 和线路中原帖明确提供的参数。",
+	"  · 有多个套餐时，挑 1–3 个主要档位，逐个写出「配置 + 价格 + 币种 + 计费周期」，不要混用不同套餐的参数。",
+	"  · 即使 prices 字段已列价格，zh 仍须把价格与配置配对；不能用「不同配置」「多种套餐」「内存、存储等」代替原帖中的具体数值。",
+	"  · 说明优惠码、首期价与续费价、优惠是否循环、购买限制、活动期限等关键条件（仅在原帖明确写出时）。",
+	"  · 只依据标题和正文，不推测未说明的配置、线路或续费政策；保留影响购买判断的限制，省略宣传套话。",
+	"  · 用连贯中文短句，纯文本，不要 markdown。",
 	"",
+	"每条输入帖子都必须返回一条结果，i 与输入序号一致，不遗漏、不重复；逐帖独立分析，不得借用其他帖子的配置或价格。",
 	"只输出 JSON 数组，不要解释文字，不要 markdown 代码块。",
 	'格式：[{"i":序号,"tags":["..."],"prices":[{"amount":数字,"currency":"USD","period":"month"}],"zh":"..."}]',
 ].join("\n");
@@ -312,7 +320,7 @@ export async function classify(
 		const payload = chunk.map((p, j) => ({
 			i: start + j,
 			title: p.title.slice(0, 200),
-			body: p.body.slice(0, 700),
+			body: p.body,
 		}));
 		const text = await aiChat(SYSTEM_PROMPT, "分析以下帖子：\n" + JSON.stringify(payload));
 		const verdicts = firstJsonArray(text);

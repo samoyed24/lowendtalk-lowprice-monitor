@@ -91,7 +91,7 @@ npm run deploy
 | `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
 | `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
 | `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
-| `CLASSIFY_BATCH_SIZE` | `10` | 单次 AI 分类的条数；帖子多时自动拆多批，避免一次返回过长被截断 |
+| `CLASSIFY_BATCH_SIZE` | `1` | 单次 AI 分类的条数；完整正文默认每次 1 帖，避免多篇长文挤占上下文。调大会减少调用次数，但更容易超出模型限制 |
 | `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
 | `INTERVAL_MINUTES` | `30` | 推送间隔（分钟），与 cron 保持一致 |
 | `NOTIFY_URL` | `https://notify.portcloud.online` | AgentNotify API 地址（兼容旧 `PC_URL`） |
@@ -145,6 +145,12 @@ npm run deploy
 | 其他（可多选） | `高防`、`KVM`、`OpenVZ`、`LXC`、`Windows`、`GPU`、`独立IP`、`免费试用`、`抽奖` |
 
 价格提取帖子里出现的所有档位（最多 5 条），按金额从低到高排列，保留原币种与计费周期。
+
+正文读取 Feed 的 `content_text`，没有时从 `content_html` 去掉 HTML 标签；清理后的正文完整送入 AI，不再按字符数截断。它不会另外打开原帖页面：Feed 本身没提供的内容和图片里的文字仍无法据此总结。
+
+默认每次分析 1 帖，避免多篇完整正文挤占上下文；调用次数和总耗时会比批量处理更多。默认模型的[上下文上限为 24,000 tokens](https://developers.cloudflare.com/workers-ai/models/llama-3.3-70b-instruct-fp8-fast/)，还需为提示词和输出预留空间，因此单篇异常长文仍可能超限。本项目不自动分段；若 AI 接口报错，则按运行失败处理，而不是主动截断正文。
+
+中文摘要要求正文信息充足时写 150–300 字，覆盖商家与机房、主要套餐的配置及对应价格、网络与 IP、优惠码、首期/续费条件及限制。信息不足时允许更短，不补猜缺失参数；实际字数和准确性仍取决于模型输出。HTML 与纯文本邮件均保留完整摘要。已推送的帖子仍按原状态去重，不会因为修改摘要而重新发送。
 
 ---
 

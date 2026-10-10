@@ -27,7 +27,7 @@
 		"FEED_PROXY": "https://feed2json.org/convert?url={url}",
 		"LOOKBACK_DAYS": "7",
 		"MAX_POSTS": "60",
-		"CLASSIFY_BATCH_SIZE": "10",
+		"CLASSIFY_BATCH_SIZE": "1",
 		"REQUIRE_SERVER_TAG": "true",
 		"INTERVAL_MINUTES": "30",
 		"NOTIFY_URL": "https://notify.portcloud.online",
