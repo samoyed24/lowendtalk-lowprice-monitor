@@ -24,9 +24,12 @@
 前置：Cloudflare 账号、`node >= 18`、已登录的 wrangler（`npx wrangler login`）。
 
 ```bash
-git clone <your-fork> && cd lowendtalk-lowprice-monitor
+git clone https://github.com/samoyed24/lowendtalk-lowprice-monitor.git
+cd lowendtalk-lowprice-monitor
 npm install
 ```
+
+> Worker 跑在你自己的 Cloudflare 账号下（KV、secrets、Cron 全归你），不需要 Fork 也能用；想改代码再 Fork。
 
 ### 1. 建自己的 KV（存状态用）
 
@@ -34,7 +37,7 @@ npm install
 npx wrangler kv namespace create LET_STATE
 ```
 
-把输出的 `id` 填进 `wrangler.jsonc` 的 `kv_namespaces[0].id`（仓库里的是作者自己的，fork 后必须换掉，否则会读写到别人的库——实际上也写不进去，会直接报错）。
+把输出的 `id` 填进 `wrangler.jsonc` 的 `kv_namespaces[0].id`（仓库里的是作者自己的，必须换成你自己的，否则会读写失败）。
 
 ### 2. 设 secrets（不进版本库）
 
