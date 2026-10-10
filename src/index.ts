@@ -1,11 +1,11 @@
 // LowEndTalk 低价监控 Worker 入口：Cron 定时 → pipeline → KV 状态 → 发信。
 //
-// 定时：wrangler.jsonc 的 triggers.crons（默认 17 */4 * * *，UTC）。
+// 定时：wrangler.jsonc 的 triggers.crons（默认 */30 * * * *，UTC）。
 // 状态：STATE KV（sent 已推送 URL + lastRun），替代原来 Actions cache 的状态文件。
 // AI：Workers AI 绑定（env.AI），不再接外部 LLM 接口。
 // 发信：AgentNotify（推荐）与自定义 SMTP 双通道，至少配一个，都配则同时发送。
 
-import { NotifyUnconfirmed, buildAlert, runPipeline, sendMail } from "./monitor";
+import { buildAlert, runPipeline, sendMail } from "./monitor";
 import type { Deps, MonitorConfig, PipelineState, RunHandlers } from "./monitor";
 // ---- 定时入口 ----
 
@@ -16,15 +16,12 @@ export default {
 		});
 	},
 
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname === "/__scheduled" && request.method === "POST") {
-			return handleManualTrigger(request, env);
-		}
 		if (url.pathname === "/healthz") {
 			return Response.json({ ok: true });
 		}
-	return new Response("Not found", { status: 404 });
+		return new Response("Not found", { status: 404 });
 	},
 } satisfies ExportedHandler<Env>;
 
@@ -56,7 +53,6 @@ type AppEnv = Env & {
 	SMTP_USER?: string;
 	SMTP_PASS?: string;
 	MAIL_TO?: string;
-	CRON_SECRET?: string;
 };
 
 function envStr(env: AppEnv, key: "NOTIFY_KEY" | "NOTIFY_TO" | "PC_KEY" | "PC_TO" | "SMTP_USER" | "SMTP_PASS" | "MAIL_TO"): string {
@@ -188,71 +184,3 @@ async function handleCron(env: Env, cron: string, d: CronDeps): Promise<void> {
 	}
 }
 
-// ---- 手动触发：POST /__scheduled（需 Authorization: Bearer <CRON_SECRET>）----
-
-interface ManualBody {
-	dry_run?: boolean;
-	force?: boolean;
-	limit?: number;
-}
-
-async function verifySecret(request: Request, env: AppEnv): Promise<boolean> {
-	const expected = env.CRON_SECRET;
-	if (!expected) return false;
-	const header = request.headers.get("Authorization") ?? "";
-	if (!header.startsWith("Bearer ")) return false;
-	const provided = header.slice("Bearer ".length);
-	const enc = new TextEncoder();
-	const [a, b] = await Promise.all([
-		crypto.subtle.digest("SHA-256", enc.encode(provided)),
-		crypto.subtle.digest("SHA-256", enc.encode(expected)),
-	]);
-	return crypto.subtle.timingSafeEqual(a, b);
-}
-
-async function handleManualTrigger(request: Request, env: Env): Promise<Response> {
-	if (!(await verifySecret(request, env))) {
-		return Response.json({ error: "unauthorized" }, { status: 401 });
-	}
-	let body: ManualBody = {};
-	try {
-		body = (await request.json()) as ManualBody;
-	} catch {
-		body = {};
-	}
-	const cfg = buildConfig(env);
-	const deps: Deps = {
-		log: (msg) => console.log(JSON.stringify({ scope: "manual", msg })),
-	};
-	const handlers: RunHandlers = {
-		loadState: () => loadStateFromKv(env),
-		saveState: (state) => env.STATE.put(STATE_KEY, JSON.stringify(state)),
-		aiChat: (system, user) => aiChatViaBinding(env, cfg.aiModel, system, user),
-		send: (subject, html, text) => sendMail(subject, html, text, cfg, deps),
-	};
-	try {
-		const result = await runPipeline(
-			cfg,
-			{ dryRun: body.dry_run === true, force: body.force !== false, limit: body.limit },
-			handlers,
-			deps,
-		);
-		if (body.dry_run === true) {
-			return Response.json({
-				emailed: false,
-				dry_run: true,
-				subject: result.subject,
-				items: result.items ?? 0,
-				html: result.html,
-			});
-		}
-		return Response.json(result);
-	} catch (exc) {
-		const err = `${exc instanceof Error ? exc.constructor.name : typeof exc}: ${exc instanceof Error ? exc.message : String(exc)}`;
-		console.error(JSON.stringify({ scope: "manual", msg: `运行失败: ${err}` }));
-		if (exc instanceof NotifyUnconfirmed) {
-			return Response.json({ error: "投递结果未知", detail: err }, { status: 502 });
-		}
-		return Response.json({ error: err }, { status: 500 });
-	}
-}

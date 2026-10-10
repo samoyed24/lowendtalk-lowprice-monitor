@@ -11,11 +11,10 @@
 - [一、快速开始](#一快速开始)
 - [二、配置项](#二配置项)
 - [三、推送间隔](#三推送间隔)
-- [四、手动触发](#四手动触发)
-- [五、工作方式](#五工作方式)
-- [六、本地开发](#六本地开发)
-- [七、常见问题](#七常见问题)
-- [八、已知限制](#八已知限制)
+- [四、工作方式](#四工作方式)
+- [五、本地开发](#五本地开发)
+- [六、常见问题](#六常见问题)
+- [七、已知限制](#七已知限制)
 
 ---
 
@@ -61,39 +60,13 @@ npx wrangler secret put MAIL_TO     # 收件邮箱
 
 端口用 465（隐式 TLS，默认）或 587（STARTTLS）；25 被 Cloudflare 禁止出站。`SMTP_HOST` / `SMTP_PORT` 在 vars 里改，默认 `smtp.qq.com:465`。
 
-```bash
-npx wrangler secret put CRON_SECRET  # 手动触发用的口令，自己编一个长的
-```
-
 ### 3. 部署
 
 ```bash
 npm run deploy
 ```
 
-部署后 Cron 自动生效（默认每 4 小时在第 17 分钟唤醒，UTC）。在 dashboard 的 Workers → Triggers → Cron Events 里能看到每次唤醒记录，`npx wrangler tail` 看实时日志。
-
-### 4. 验证
-
-先手动 dry-run（不发信、不改状态，返回将推送的内容）：
-
-```bash
-curl -X POST https://<你的worker>.workers.dev/__scheduled \
-  -H "Authorization: Bearer <CRON_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"dry_run": true, "limit": 20}'
-```
-
-确认内容无误后，真正跑一次：
-
-```bash
-curl -X POST https://<你的worker>.workers.dev/__scheduled \
-  -H "Authorization: Bearer <CRON_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"force": true}'
-```
-
----
+部署后 Cron 自动生效（默认每 30 分钟唤醒，UTC）。在 dashboard 的 Workers → Triggers → Cron Events 里能看到每次唤醒记录，`npx wrangler tail` 看实时日志。
 
 ## 二、配置项
 
@@ -106,7 +79,6 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 | `SMTP_USER` | 通道 2 | 发件邮箱，如 `you@qq.com` |
 | `SMTP_PASS` | 通道 2 | 邮箱授权码（不是登录密码） |
 | `MAIL_TO` | 通道 2 | 收件邮箱 |
-| `CRON_SECRET` | 是 | 手动触发口令（`POST /__scheduled` 的 Bearer token） |
 
 两个通道至少配一个，都配则同时发送。
 
@@ -121,7 +93,7 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 | `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
 | `CLASSIFY_BATCH_SIZE` | `10` | 单次 AI 分类的条数；帖子多时自动拆多批，避免一次返回过长被截断 |
 | `REQUIRE_SERVER_TAG` | `true` | 只推送带服务器类型标签的条目 |
-| `INTERVAL_MINUTES` | `240` | 推送间隔（分钟），与 cron 保持一致 |
+| `INTERVAL_MINUTES` | `30` | 推送间隔（分钟），与 cron 保持一致 |
 | `NOTIFY_URL` | `https://notify.portcloud.online` | AgentNotify API 地址（兼容旧 `PC_URL`） |
 | `NOTIFY_TIMEOUT` | `60` | AgentNotify 轮询投递结果的总预算（秒），须为正整数（兼容旧 `PC_TIMEOUT`） |
 | `SMTP_HOST` | `smtp.qq.com` | 自定义 SMTP 服务器 |
@@ -140,47 +112,19 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 
 | 推送间隔 | `INTERVAL_MINUTES` | cron（UTC） |
 |---|---|---|
-| 30 分钟 | `30` | `*/30 * * * *` |
+| 30 分钟（默认） | `30` | `*/30 * * * *` |
 | 1 小时 | `60` | `17 * * * *` |
-| 4 小时（默认） | `240` | `17 */4 * * *` |
+| 4 小时 | `240` | `17 */4 * * *` |
 
 > `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期。
 
 ---
 
-## 四、手动触发
-
-`POST /__scheduled`，header 带 `Authorization: Bearer <CRON_SECRET>`，body（JSON，均可选）：
-
-| 字段 | 默认 | 说明 |
-|---|---|---|
-| `dry_run` | `false` | 只抓取并返回将推送的内容，不发信、不改状态 |
-| `force` | `true` | 是否忽略时间间隔立即执行；设 `false` 则受 `INTERVAL_MINUTES` 约束 |
-| `limit` | 不限 | 只处理前 N 条新增（调试用） |
-
-```bash
-# 预览（推荐先跑这个）
-curl -X POST https://<你的worker>.workers.dev/__scheduled \
-  -H "Authorization: Bearer <CRON_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"dry_run": true}'
-
-# 立即执行一次
-curl -X POST https://<你的worker>.workers.dev/__scheduled \
-  -H "Authorization: Bearer <CRON_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-未设 `CRON_SECRET` 或口令不对时返回 `401`。
-
----
-
-## 五、工作方式
+## 四、工作方式
 
 ```
-唤醒（Worker Cron，默认 17 */4 * * * UTC）
-  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 240）则跳过
+唤醒（Worker Cron，默认 */30 * * * * UTC）
+  └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 30）则跳过
      └─ 抓取     FEED_PROXY 转换 RSS
         └─ 解析  时间窗口 / HTML 实体解码 / 剥离重复标题
            └─ 打标 Workers AI（env.AI）输出 tags + prices + 中文摘要
@@ -204,7 +148,7 @@ curl -X POST https://<你的worker>.workers.dev/__scheduled \
 
 ---
 
-## 六、本地开发
+## 五、本地开发
 
 ```bash
 npm test        # 单测（vitest）
@@ -218,7 +162,7 @@ npx wrangler tail  # 看线上日志
 
 ---
 
-## 七、常见问题
+## 六、常见问题
 
 **Q：跑完了但没收到邮件？**
 
@@ -234,15 +178,15 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 
 **Q：从旧的 GitHub Actions 版迁移过来，状态怎么办？**
 
-状态存的地方变了（Actions cache → KV），旧状态带不过来。首次运行会把窗口内（默认 7 天）的帖子全当新增推一次，之后恢复正常。建议先用 `dry_run` 看一眼量，觉得太多可以先把 `LOOKBACK_DAYS` 调小跑一次，再调回来。
+状态存的地方变了（Actions cache → KV），旧状态带不过来。首次运行会把窗口内（默认 7 天）的帖子全当新增推一次，之后恢复正常。觉得太多可以先把 `LOOKBACK_DAYS` 调小跑一次，再调回来。
 
 **Q：AI 模型想换一个？**
 
-改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可。部分模型需要 Workers Paid 计划或 AI Gateway 额度，换完先 dry-run 验证。
+改 `AI_MODEL` 为 Workers AI 目录里的文本生成模型即可。部分模型需要 Workers Paid 计划或 AI Gateway 额度。
 
 ---
 
-## 八、已知限制
+## 七、已知限制
 
 - **抓取依赖 `feed2json.org`**：LET 前面有 Cloudflare，直连返回 403，只能经该第三方服务转换 RSS。服务不可用时抓取失败，会发告警邮件。换用可直接访问的源站时，把 `FEED_PROXY` 设为 `{url}` 即可绕过。
 - **标签与价格由 AI 判定**：均可能出错，尤其是价格仅出现在图片中、或只写「联系报价」的帖子。
