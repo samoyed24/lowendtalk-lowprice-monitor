@@ -8,7 +8,6 @@ import type { Deps, MonitorConfig } from "../src/monitor";
 function cfg(timeout = 60): MonitorConfig {
 	return {
 		feedUrl: "https://example.invalid/feed",
-		feedProxy: "{url}",
 		lookbackDays: 7,
 		maxPosts: 60,
 		classifyBatchSize: 10,

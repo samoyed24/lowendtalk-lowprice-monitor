@@ -4,6 +4,7 @@ import {
 	merge,
 	normalizePrices,
 	parsePosts,
+	parseRssItems,
 	runPipeline,
 	type FeedData,
 	type MonitorConfig,
@@ -14,7 +15,6 @@ import {
 function cfg(over: Partial<MonitorConfig> = {}): MonitorConfig {
 	return {
 		feedUrl: "https://example.invalid/feed",
-		feedProxy: "{url}",
 		lookbackDays: 7,
 		maxPosts: 60,
 		classifyBatchSize: 10,
@@ -117,6 +117,69 @@ describe("normalizePrices + merge", () => {
 	});
 });
 
+describe("parseRssItems（直连 RSS）", () => {
+	const xml = `<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Offers — LowEndTalk</title>
+    <item>
+      <title>[UK] Intel &amp; AMD &lt;deal&gt;</title>
+      <link>https://lowendtalk.com/discussion/1/uk-intel</link>
+      <pubDate>Fri, 09 Oct 2026 14:24:18 +0000</pubDate>
+      <dc:creator>alice</dc:creator>
+      <guid isPermaLink="false">1@/discussions</guid>
+      <description><![CDATA[<h1>[UK] Intel</h1>
+<p>2 vCore - $6.03 per month</p>
+<p>Order: <a href="https://x.invalid/a?b=1&amp;c=2">link</a></p>]]></description>
+    </item>
+    <item>
+      <title>No link item</title>
+      <description>skipped</description>
+    </item>
+    <item>
+      <title>Second</title>
+      <link>https://lowendtalk.com/discussion/2/second</link>
+      <pubDate>Sat, 10 Oct 2026 15:43:53 +0000</pubDate>
+      <content:encoded><![CDATA[<p>encoded wins</p>]]></content:encoded>
+      <description><![CDATA[<p>plain description</p>]]></description>
+    </item>
+  </channel>
+</rss>`;
+
+	it("解析标题/链接/作者/时间/正文，跳过无 link 的 item", () => {
+		const items = parseRssItems(xml);
+		expect(items).toHaveLength(2);
+		const first = items[0];
+		expect(first?.url).toBe("https://lowendtalk.com/discussion/1/uk-intel");
+		expect(first?.title).toBe("[UK] Intel & AMD <deal>");
+		expect(first?.author?.name).toBe("alice");
+		expect(first?.date_published).toBe("2026-10-09T14:24:18.000Z");
+		expect(first?.content_html).toContain("$6.03 per month");
+		// CDATA 内层实体在交给 parsePosts 前不解码，避免二次解码；由 decodeEntities 统一处理。
+		expect(first?.content_html).toContain("b=1&amp;c=2");
+	});
+
+	it("content:encoded 优先于 description", () => {
+		expect(parseRssItems(xml)[1]?.content_html).toContain("encoded wins");
+	});
+
+	it("解析结果能直接喂给 parsePosts，保留价格与正文", () => {
+		const now = Date.parse("2026-10-10T16:00:00Z");
+		const posts = parsePosts({ items: parseRssItems(xml) }, cfg(), now);
+		expect(posts.map((p) => p.postUrl)).toEqual([
+			"https://lowendtalk.com/discussion/2/second",
+			"https://lowendtalk.com/discussion/1/uk-intel",
+		]);
+		expect(posts[1]?.author).toBe("alice");
+		expect(posts[1]?.body).toContain("$6.03 per month");
+		expect(posts[1]?.body).not.toContain("<p>");
+	});
+
+	it("没有 item 时返回空数组", () => {
+		expect(parseRssItems("<rss><channel></channel></rss>")).toEqual([]);
+	});
+});
+
 describe("runPipeline 状态守卫", () => {
 	function handlers(over: Partial<RunHandlers> = {}): RunHandlers & { saved: PipelineState[]; sent: number } {
 		const saved: PipelineState[] = [];
@@ -141,10 +204,17 @@ describe("runPipeline 状态守卫", () => {
 	const feedFetch = (posts: { postUrl: string }[]) => ({
 		fetchImpl: (async () =>
 			new Response(
-				JSON.stringify({
-					items: posts.map((p) => ({ url: p.postUrl, title: "t", content_text: "body body body" })),
-				}),
-				{ status: 200 },
+				`<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel>` +
+					posts
+						.map(
+							(p) =>
+								`<item><title>t</title><link>${p.postUrl}</link>` +
+								`<pubDate>${new Date().toUTCString()}</pubDate>` +
+								`<description><![CDATA[<p>body body body</p>]]></description></item>`,
+						)
+						.join("") +
+					`</channel></rss>`,
+				{ status: 200, headers: { "Content-Type": "application/rss+xml" } },
 			)) as typeof fetch,
 		...quiet,
 	});

@@ -93,7 +93,7 @@ workflow 会自动：
 | 参数 | 默认值 | 怎么改 |
 |---|---|---|
 | `AI_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | 改 `wrangler.jsonc` 里的 `vars`，提交后**重跑 workflow** |
-| `FEED_URL` / `FEED_PROXY` | LET Offers RSS / feed2json 服务 | 同上 |
+| `FEED_URL` | LET Offers RSS | 同上 |
 | `LOOKBACK_DAYS` / `MAX_POSTS` | `7` / `60` | 同上 |
 | `CLASSIFY_BATCH_SIZE` | `1` | 同上 |
 | `REQUIRE_SERVER_TAG` | `true` | 同上 |
@@ -127,8 +127,7 @@ workflow 会自动：
 | Variable | 默认值 | 说明 |
 |---|---|---|
 | `AI_MODEL` | `@cf/qwen/qwen3-30b-a3b-fp8` | Workers AI 模型；默认 Qwen3 30B A3B，调用时追加 `/no_think`，并用 JSON Schema 约束分类输出结构 |
-| `FEED_URL` | LET Offers 板块 RSS | 抓取源 |
-| `FEED_PROXY` | `https://feed2json.org/convert?url={url}` | RSS 转 JSON 服务 |
+| `FEED_URL` | LET Offers 板块 RSS | 抓取源，Worker 直连读取 |
 | `LOOKBACK_DAYS` | `7` | 只处理最近 N 天的帖子 |
 | `MAX_POSTS` | `60` | 单次送进 AI 的条数上限 |
 | `CLASSIFY_BATCH_SIZE` | `1` | 单次 AI 分类的条数；完整正文默认每次 1 帖，避免多篇长文挤占上下文。调大会减少调用次数，但更容易超出模型限制 |
@@ -173,8 +172,8 @@ workflow 会自动：
 ```
 唤醒（Worker Cron，默认 17 * * * * UTC）
   └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 60）则跳过
-     └─ 抓取     FEED_PROXY 转换 RSS
-        └─ 解析  时间窗口 / HTML 实体解码 / 剥离重复标题
+     └─ 抓取     直连 FEED_URL 取 RSS
+        └─ 解析  RSS → 条目 / 时间窗口 / HTML 实体解码 / 剥离重复标题
            └─ 打标 Workers AI（env.AI）输出 tags + prices + 中文摘要
               └─ 整理 按最低月均价排序
                  └─ 去重 与 KV 状态比对，取新增
@@ -281,7 +280,7 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 
 ## 八、已知限制
 
-- **抓取依赖 `feed2json.org`**：该公共转换服务限流较紧（约 50 次/小时），超额会返回 HTTP 429，导致本轮抓取失败并发告警邮件。服务不可用时同理。换用可直接访问的源站时，把 `FEED_PROXY` 设为 `{url}` 即可绕过。
+- **抓取走 Worker 直连 RSS**：不再依赖第三方转换服务。LowEndTalk 前面有 Cloudflare，**本机直连会被挑战页拦掉（403）**，但 Worker 出口可以正常读取；因此抓取失败时请用 `wrangler tail` 看线上日志，而不是本地 `curl`。若以后 LET 对 Worker 出口也收紧，抓取会失败并发告警邮件。
 - **标签与价格由 AI 判定**：均可能出错，尤其是价格仅出现在图片中、或只写「联系报价」的帖子。
 - **Cron 不保证精确准时**：高峰期可能延迟数分钟。
 - **自定义 SMTP 走 TCP sockets**：25 端口被 Cloudflare 禁止出站，只能用 465（隐式 TLS）或 587（STARTTLS）；协议是手写的 `EHLO → AUTH LOGIN → DATA`，QQ 邮箱请用授权码。

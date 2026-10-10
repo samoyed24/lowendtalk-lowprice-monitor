@@ -26,7 +26,6 @@
 	"vars": {
 		"AI_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8",
 		"FEED_URL": "https://lowendtalk.com/categories/offers/feed.rss",
-		"FEED_PROXY": "https://feed2json.org/convert?url={url}",
 		"LOOKBACK_DAYS": "7",
 		"MAX_POSTS": "60",
 		"CLASSIFY_BATCH_SIZE": "1",

@@ -7,7 +7,6 @@ import { sendSmtpMail } from "./smtp";
 import type { SmtpDialer } from "./smtp";
 export interface MonitorConfig {
 	feedUrl: string;
-	feedProxy: string;
 	lookbackDays: number;
 	maxPosts: number;
 	classifyBatchSize: number;
@@ -174,14 +173,79 @@ async function fetchWithRetry(
 
 export async function fetchFeed(cfg: MonitorConfig, d: Deps = {}): Promise<FeedData> {
 	const log = d.log ?? ((msg: string) => console.log(msg));
-	const url = cfg.feedProxy.replace("{url}", encodeURIComponent(cfg.feedUrl));
-	const r = await fetchWithRetry(url, {}, 90_000, 3, d);
-	const data: unknown = await r.json();
-	if (typeof data !== "object" || data === null || !("items" in data) || !Array.isArray(data.items)) {
-		throw new Error("feed 返回结构异常，拿不到 items");
+	const r = await fetchWithRetry(cfg.feedUrl, { headers: { Accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8" } }, 90_000, 3, d);
+	const xml = await r.text();
+	const items = parseRssItems(xml);
+	if (items.length === 0) {
+		throw new Error(`RSS 里没有解析出任何 <item>（响应前 200 字：${xml.slice(0, 200)}）`);
 	}
-	log(`抓到 ${data.items.length} 条`);
-	return { items: data.items };
+	log(`抓到 ${items.length} 条`);
+	return { items };
+}
+
+// ---------------------------------------------------------------- RSS 解析
+//
+// Workers 运行时没有 DOMParser，也不引入 XML 库：RSS 结构固定，用扫描器按标签取值即可。
+// 只处理 RSS 2.0（LET 用的是它）；取不到 <item> 就报错，不静默返回空。
+
+/** 取成对标签的内容，返回首个匹配。用于 item/title 这类不含同名嵌套的标签。 */
+function tagContent(xml: string, tag: string): string {
+	// 单次正则，避免为每个标签都复制一份小写副本。
+	const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}\\s*>`, "i").exec(xml);
+	return m === null ? "" : (m[1] ?? "");
+}
+
+/** 取 CDATA 内容，没有 CDATA 时去掉最外层标签。 */
+function unwrapCdata(raw: string): string {
+	const m = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(raw);
+	return m !== null ? (m[1] ?? "") : raw;
+}
+
+function xmlUnescape(s: string): string {
+	return s
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+		.replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+		.replace(/&amp;/g, "&"); // 最后解码 &，避免二次解码
+}
+
+/** RSS <item> 归一化后的形状（JSON Feed 子集），parsePosts 直接消费。 */
+export interface RssItem {
+	url: string;
+	title: string;
+	date_published: string;
+	content_html: string;
+	author?: { name: string };
+}
+
+/** 把 RSS 转成现有的 JSON Feed 形状，parsePosts 不用改。 */
+export function parseRssItems(xml: string): RssItem[] {
+	const items: RssItem[] = [];
+	const re = /<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi;
+	for (const m of xml.matchAll(re)) {
+		const block = m[1] ?? "";
+		const title = xmlUnescape(tagContent(block, "title")).trim();
+		const url = xmlUnescape(tagContent(block, "link")).trim();
+		if (!url) continue;
+		const rawDate = xmlUnescape(tagContent(block, "pubDate") || tagContent(block, "dc:date")).trim();
+		const parsed = rawDate ? Date.parse(rawDate) : Number.NaN;
+		const author = xmlUnescape(tagContent(block, "dc:creator")).trim();
+		// LET 的正文在 <description>（CDATA 包裹的 HTML）；<content:encoded> 若有则优先。
+		const encoded = tagContent(block, "content:encoded");
+		const description = tagContent(block, "description");
+		const html = unwrapCdata(encoded !== "" ? encoded : description);
+		items.push({
+			url,
+			title,
+			date_published: Number.isNaN(parsed) ? "" : new Date(parsed).toISOString(),
+			content_html: html,
+			...(author ? { author: { name: author } } : {}),
+		});
+	}
+	return items;
 }
 
 const ENTITY_TABLE: Record<string, string> = {

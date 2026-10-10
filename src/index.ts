@@ -97,7 +97,6 @@ function buildConfig(env: AppEnv): MonitorConfig {
 	const smtpPortRaw = readInt(String(env.SMTP_PORT ?? "465"), 465);
 	return {
 		feedUrl: String(env.FEED_URL),
-		feedProxy: String(env.FEED_PROXY),
 		lookbackDays: readInt(String(env.LOOKBACK_DAYS), 7),
 		maxPosts: readInt(String(env.MAX_POSTS), 60),
 		classifyBatchSize: readInt(String(env.CLASSIFY_BATCH_SIZE), 1),
