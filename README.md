@@ -9,19 +9,20 @@
 ## 目录
 
 - [一、一键部署（GitHub Actions）](#一一键部署github-actions)
-- [二、部署后调整参数](#二部署后调整参数)
-- [三、配置项](#三配置项)
-- [四、推送间隔](#四推送间隔)
-- [五、工作方式](#五工作方式)
-- [六、本地开发与部署](#六本地开发与部署)
-- [七、常见问题](#七常见问题)
-- [八、已知限制](#八已知限制)
+- [二、为什么推荐用 AgentNotify，而不是自建 SMTP](#二为什么推荐用-agentnotify而不是自建-smtp)
+- [三、部署后调整参数](#三部署后调整参数)
+- [四、配置项](#四配置项)
+- [五、推送间隔](#五推送间隔)
+- [六、工作方式](#六工作方式)
+- [七、本地开发与部署](#七本地开发与部署)
+- [八、常见问题](#八常见问题)
+- [九、已知限制](#九已知限制)
 
 ---
 
 ## 一、一键部署（GitHub Actions）
 
-不用装 Node、不用配 wrangler，全程在 GitHub 网页上完成。**只需填入部署必需参数，其余用仓库默认值**（见[第二节](#二部署后调整参数)）。
+不用装 Node、不用配 wrangler，全程在 GitHub 网页上完成。**只需填入部署必需参数，其余用仓库默认值**（见[第三节](#三部署后调整参数)）。
 
 ### 1. Fork 本仓库
 
@@ -29,11 +30,28 @@
 
 ### 2. 创建 Cloudflare API Token
 
-1. 打开 [Cloudflare Dashboard → API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token**。
-2. 用官方模板 **Edit Cloudflare Workers**（含 Workers Scripts 与 Workers KV 编辑权限），或自定义勾选：
-   - `Workers Scripts: Edit`
-   - `Workers KV Storage: Edit`
-3. 选择要部署的账号，创建后**复制 Token**（只显示一次）。
+打开 [Cloudflare Dashboard → API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token**。
+
+![创建 API Token 入口](docs/cloudflare-token-1.png)
+
+选择官方模板 **Edit Cloudflare Workers**（含 Workers Scripts 与 Workers KV 的编辑权限），或自定义勾选：
+
+- `Workers Scripts: Edit`
+- `Workers KV Storage: Edit`
+
+![选择 Edit Cloudflare Workers 模板](docs/cloudflare-token-2.png)
+
+![确认权限与账号范围](docs/cloudflare-token-3.png)
+
+创建并确认。
+
+![创建 Token](docs/cloudflare-token-4.png)
+
+**Token 只显示一次，务必当场复制**。
+
+![复制 Token（只显示一次）](docs/cloudflare-token-5.png)
+
+> 同一页面下方的 `Access Key ID` / `Secret Access Key` 是 R2 的 S3 凭证，**本项目用不到**，不要填进 GitHub Secrets。
 
 ### 3. 找到 Account ID
 
@@ -43,6 +61,8 @@
 
 **Settings → Secrets and variables → Actions → New repository secret**。
 
+![Repository secrets 列表](docs/github-secret-1.png)
+
 必填（两个）：
 
 | 名称 | 说明 |
@@ -50,7 +70,7 @@
 | `CLOUDFLARE_API_TOKEN` | 上一步创建的 API Token |
 | `CLOUDFLARE_ACCOUNT_ID` | 你的 Cloudflare Account ID |
 
-推送通道（**至少配一个**，推荐通道 1）：
+推送通道（**至少配一个**，推荐通道 1，理由见[第二节](#二为什么推荐用-agentnotify而不是自建-smtp)）：
 
 | 名称 | 必填 | 说明 |
 |---|---|---|
@@ -60,33 +80,61 @@
 | `SMTP_PASS` | 通道 2 | 邮箱授权码（不是登录密码） |
 | `MAIL_TO` | 通道 2 | 收件邮箱 |
 
-> **AgentNotify** 使用前需先给其 GitHub 仓库点一个 Star，否则调用返回 `403 STAR_REQUIRED`。在 [notify.portcloud.online](https://notify.portcloud.online) 用 GitHub 登录控制台，在**接收邮箱**里添加并验证地址，再在 **API Key** 里创建 Key（明文只展示一次）。
-> 自定义 SMTP 走 465（隐式 TLS，默认）或 587（STARTTLS），25 被 Cloudflare 禁止出站。
-
 ### 5. 运行 workflow
 
 **Actions → Deploy to Cloudflare Workers → Run workflow**（分支选 `main`）→ 绿色 **Run workflow**。
+
+![workflow_dispatch 手动触发入口](docs/github-action-1.png)
 
 workflow 会自动：
 
 1. 校验必填 Secrets；
 2. 跑一遍测试；
 3. 查找账号里名为 `LET_STATE` 的 KV namespace，没有就创建，并把 id 写进 `wrangler.jsonc`；
-4. 部署 Worker（首次即包含 `17 * * * *` 定时触发器）；
+4. 部署 Worker（首次即包含 `0 * * * *` 定时触发器）；
 5. 把填写的推送参数写成 Worker secrets；
 6. 在运行摘要里打印 Worker 地址。
 
 **部署是手动触发的**：push 代码不会自动部署，避免 fork 后误跑。
 
+运行成功后在 **deploy summary** 里能看到 Worker 地址：
+
+![运行成功与 deploy summary](docs/github-action-2.png)
+
 ### 6. 确认结果
 
 - Actions 运行成功，摘要里能看到 Worker 地址（形如 `https://let-lowprice-monitor.<你的子域>.workers.dev`）。
 - 浏览器打开该地址的 `/healthz`，返回 `{"ok":true}`。
-- 触发器首次创建或修改[最多需要 15 分钟传播](https://developers.cloudflare.com/workers/configuration/cron-triggers/)；传播完成后才会在下一个每小时第 17 分钟运行。可在 dashboard 的 **Workers → Settings → Trigger Events → View events** 查看记录（新 Worker 的历史事件展示可能延迟最多 30 分钟）。
+- 触发器首次创建或修改[最多需要 15 分钟传播](https://developers.cloudflare.com/workers/configuration/cron-triggers/)；传播完成后才会在下一个整点运行。
+
+在 dashboard 的 **Workers & Pages → 你的 Worker** 可以确认绑定与触发器状态：
+
+![Worker 概览：绑定 AI 与 STATE，Triggers 1](docs/cloudflare-worker-1.png)
 
 ---
 
-## 二、部署后调整参数
+## 二、为什么推荐用 AgentNotify，而不是自建 SMTP
+
+**结论：优先用 `NOTIFY_KEY` + `NOTIFY_TO`（AgentNotify），别一上来就自己配 SMTP。**
+
+| 对比项 | AgentNotify（推荐） | 自建 SMTP |
+|---|---|---|
+| 配置成本 | 填 2 个 Secret，登录控制台点几下 | 需要邮箱、授权码、端口、TLS 模式四项 |
+| 发件通道 | 服务方托管，不用管发信域名 | 依赖你自己的邮箱服务商 |
+| 端口限制 | 不受影响 | 25 端口被 Cloudflare 禁止出站，只能 465 / 587 |
+| 协议实现 | 标准 HTTPS API | 本项目手写 `EHLO → AUTH LOGIN → DATA`，出问题排查面更大 |
+| 换收件人 | 改 1 个 Secret | 改 Secret，且可能要重新授权 |
+| 失败可见性 | 返回 `log_id`，可查投递结果 | 只能看 SMTP 应答码 |
+
+关键差异在于：**SMTP 是这套流程里最容易出问题的一环**。它要自己处理 TLS 升级、认证、编码和应答码解析，任一环节不对就静默失败；而 AgentNotify 只是两个 HTTPS 请求。
+
+只有这些情况才值得自建 SMTP：已经有一套稳定的发信服务、需要特定发件域名、或不想依赖第三方。
+
+> AgentNotify 使用前需先给其 GitHub 仓库点一个 Star，否则调用返回 `403 STAR_REQUIRED`。在 [notify.portcloud.online](https://notify.portcloud.online) 用 GitHub 登录控制台，在**接收邮箱**里添加并验证地址，再在 **API Key** 里创建 Key（明文只展示一次）。
+
+---
+
+## 三、部署后调整参数
 
 **一键部署只填必需参数**：Cloudflare 凭据 + 一个推送通道。下面这些都用仓库默认值，**部署成功后按需再改**：
 
@@ -97,7 +145,7 @@ workflow 会自动：
 | `LOOKBACK_DAYS` / `MAX_POSTS` | `7` / `60` | 同上 |
 | `CLASSIFY_BATCH_SIZE` | `1` | 同上 |
 | `REQUIRE_SERVER_TAG` | `true` | 同上 |
-| `INTERVAL_MINUTES` | `60` | 同上，且要同步改 cron（见[第四节](#四推送间隔)） |
+| `INTERVAL_MINUTES` | `60` | 同上，且要同步改 cron（见[第五节](#五推送间隔)） |
 | `SMTP_HOST` / `SMTP_PORT` | `smtp.qq.com` / `465` | 同上 |
 | `NOTIFY_URL` / `NOTIFY_TIMEOUT` | 见下表 | 同上 |
 
@@ -108,7 +156,7 @@ workflow 会自动：
 
 ---
 
-## 三、配置项
+## 四、配置项
 
 ### Secrets（GitHub Secrets → workflow 写入 Worker）
 
@@ -150,27 +198,29 @@ workflow 会自动：
 
 ---
 
-## 四、推送间隔
+## 五、推送间隔
 
 间隔由两处共同决定，改动时**同步改两处**：
 
 1. `wrangler.jsonc` 的 `triggers.crons`（唤醒频率，UTC）
-2. `wrangler.jsonc` 的 `INTERVAL_MINUTES`（分钟）
+2. `wrangler.jsonc` 的 `INTERVAL_MINUTES`（最短间隔，分钟）
 
 | 推送间隔 | `INTERVAL_MINUTES` | cron（UTC） |
 |---|---|---|
 | 30 分钟 | `30` | `*/30 * * * *` |
-| 1 小时（默认） | `60` | `17 * * * *` |
-| 4 小时 | `240` | `17 */4 * * *` |
+| 1 小时（默认） | `60` | `0 * * * *` |
+| 4 小时 | `240` | `0 */4 * * *` |
 
-> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期。改完提交并重跑 workflow 生效。
+> **为什么用整点 `0 * * * *`，而不是某个错开的分钟（如 `17`）？**
+> 错开分钟没有实际收益——cron 只是唤醒频率，真正决定是否执行的是 `INTERVAL_MINUTES`。反而要注意：`lastRun` 记的是**定时触发时刻**，所以整点触发配 60 分钟间隔时每次都会执行；若记成「完成时刻」，一次运行耗时几十秒会让下一次差几秒不满 60 分钟而被跳过，实际变成每两小时一次（本项目已修正）。
+> `INTERVAL_MINUTES` 应当 ≥ cron 的唤醒周期。
 
 ---
 
-## 五、工作方式
+## 六、工作方式
 
 ```
-唤醒（Worker Cron，默认 17 * * * * UTC）
+唤醒（Worker Cron，默认 0 * * * * UTC）
   └─ 间隔检查    距上次运行不足 INTERVAL_MINUTES（默认 60）则跳过
      └─ 抓取     直连 FEED_URL 取 RSS
         └─ 解析  RSS → 条目 / 时间窗口 / HTML 实体解码 / 剥离重复标题
@@ -193,7 +243,7 @@ workflow 会自动：
 
 价格提取帖子里出现的所有档位（最多 5 条），按金额从低到高排列，保留原币种与计费周期。
 
-正文读取 Feed 的 `content_text`，没有时从 `content_html` 去掉 HTML 标签；清理后的正文完整送入 AI，不再按字符数截断。它不会另外打开原帖页面：Feed 本身没提供的内容和图片里的文字仍无法据此总结。
+正文读取 RSS 的 `description`（`content:encoded` 优先），去掉 HTML 标签后完整送入 AI，不再按字符数截断。它不会另外打开原帖页面：RSS 本身没提供的内容和图片里的文字仍无法据此总结。
 
 默认每次分析 1 帖，避免多篇完整正文挤占上下文；调用次数和总耗时会比批量处理更多。默认模型的[上下文上限为 32,768 tokens](https://developers.cloudflare.com/workers-ai/models/qwen3-30b-a3b-fp8/)，还需为提示词和输出预留空间，因此单篇异常长文仍可能超限。本项目不自动分段；若 AI 接口报错，则按运行失败处理，而不是主动截断正文。
 
@@ -201,7 +251,7 @@ workflow 会自动：
 
 ---
 
-## 六、本地开发与部署
+## 七、本地开发与部署
 
 前置：`node >= 18`、已登录的 wrangler（`npx wrangler login`）。
 
@@ -242,7 +292,7 @@ npx wrangler tail  # 看线上日志
 
 ---
 
-## 七、常见问题
+## 八、常见问题
 
 **Q：跑完了但没收到邮件？**
 
@@ -250,7 +300,7 @@ npx wrangler tail  # 看线上日志
 
 **Q：Actions 里报缺少 Secrets？**
 
-必填 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`，且至少配一个推送通道（`NOTIFY_KEY`+`NOTIFY_TO` 或 SMTP 三件套）。workflow 会在「校验必填参数」步骤直接失败并提示缺哪个。
+必填 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`，且至少配一个推送通道（`NOTIFY_KEY` + `NOTIFY_TO` 或 SMTP 三件套）。workflow 会在「校验必填参数」步骤直接失败并提示缺哪个。
 
 **Q：API Token 权限不够？**
 
@@ -278,7 +328,7 @@ dashboard → Workers → 你的 Worker → Settings → Triggers，把 Cron Tri
 
 ---
 
-## 八、已知限制
+## 九、已知限制
 
 - **抓取走 Worker 直连 RSS**：不再依赖第三方转换服务。LowEndTalk 前面有 Cloudflare，**本机直连会被挑战页拦掉（403）**，但 Worker 出口可以正常读取；因此抓取失败时请用 `wrangler tail` 看线上日志，而不是本地 `curl`。若以后 LET 对 Worker 出口也收紧，抓取会失败并发告警邮件。
 - **标签与价格由 AI 判定**：均可能出错，尤其是价格仅出现在图片中、或只写「联系报价」的帖子。

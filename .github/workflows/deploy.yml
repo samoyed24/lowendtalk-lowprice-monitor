@@ -110,10 +110,11 @@ jobs:
         run: |
           echo "### 部署完成 🎉" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Worker: \`let-lowprice-monitor\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: let-lowprice-monitor" >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$DEPLOY_URL" ]; then
-            echo "- 地址: $DEPLOY_URL（\`/healthz\` 返回 {\"ok\":true}）" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 地址: $DEPLOY_URL" >> "$GITHUB_STEP_SUMMARY"
+            echo "- 健康检查: 浏览器打开 $DEPLOY_URL/healthz 应返回 ok true" >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "- 定时: 每小时第 17 分钟（UTC），首次创建触发器最多需 15 分钟传播" >> "$GITHUB_STEP_SUMMARY"
+          echo "- 定时: 每小时整点（UTC），首次创建触发器最多需 15 分钟传播" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "其余参数（AI_MODEL、推送间隔、SMTP 端口等）在 \`wrangler.jsonc\` 里改，改完重跑本 workflow。" >> "$GITHUB_STEP_SUMMARY"
+          echo "其余参数（AI_MODEL、推送间隔、SMTP 端口等）在 wrangler.jsonc 里改，改完重跑本 workflow。" >> "$GITHUB_STEP_SUMMARY"

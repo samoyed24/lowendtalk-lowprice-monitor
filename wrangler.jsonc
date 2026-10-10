@@ -1,9 +1,9 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
-	// 每小时第 17 分钟唤醒（UTC），与 INTERVAL_MINUTES 保持一致。
+	// 每小时整点唤醒（UTC），与 INTERVAL_MINUTES 保持一致。
 	// 改推送间隔时同步改两处：这里的 cron 与下面的 INTERVAL_MINUTES。
 	"triggers": {
-		"crons": ["17 * * * *"]
+		"crons": ["0 * * * *"]
 	},
 	"name": "let-lowprice-monitor",
 	"main": "src/index.ts",

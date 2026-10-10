@@ -1,6 +1,6 @@
 // LowEndTalk 低价监控 Worker 入口：Cron 定时 → pipeline → KV 状态 → 发信。
 //
-// 定时：wrangler.jsonc 的 triggers.crons（默认 17 * * * *，UTC）。
+// 定时：wrangler.jsonc 的 triggers.crons（默认 0 * * * *，UTC）。
 // 状态：STATE KV（sent 已推送 URL + lastRun），替代原来 Actions cache 的状态文件。
 // AI：Workers AI 绑定（env.AI），不再接外部 LLM 接口。
 // 发信：AgentNotify（推荐）与自定义 SMTP 双通道，至少配一个，都配则同时发送。
@@ -44,7 +44,7 @@ export default {
 	async scheduled(controller: ScheduledController, env: Env): Promise<void> {
 		await handleCron(env, controller.cron, {
 			log: (msg) => console.log(JSON.stringify({ scope: "cron", cron: controller.cron, msg })),
-		});
+		}, controller.scheduledTime);
 	},
 
 	async fetch(request: Request): Promise<Response> {
@@ -192,7 +192,7 @@ async function aiChatViaBinding(env: Env, model: string, system: string, user: s
 	throw new Error(`AI 调用失败: ${last instanceof Error ? last.message : String(last)}`);
 }
 
-async function handleCron(env: Env, cron: string, d: CronDeps): Promise<void> {
+async function handleCron(env: Env, cron: string, d: CronDeps, scheduledAt?: number): Promise<void> {
 	const log = d.log ?? ((msg: string) => console.log(msg));
 	const cfg = buildConfig(env);
 	const handlers: RunHandlers = {
@@ -202,7 +202,7 @@ async function handleCron(env: Env, cron: string, d: CronDeps): Promise<void> {
 		send: d.sendMail ?? ((subject, html, text) => sendMail(subject, html, text, cfg, d)),
 	};
 	try {
-		const result = await runPipeline(cfg, {}, handlers, d);
+		const result = await runPipeline(cfg, { scheduledAt }, handlers, d);
 		log(`完成（cron=${cron}）：${result.emailed ? `已推送 ${result.items ?? 0} 条` : "无新增"}`);
 	} catch (exc) {
 		const err = `${exc instanceof Error ? exc.constructor.name : typeof exc}: ${exc instanceof Error ? exc.message : String(exc)}`;

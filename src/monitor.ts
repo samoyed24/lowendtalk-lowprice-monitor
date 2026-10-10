@@ -846,7 +846,7 @@ export interface RunResult {
 
 export async function runPipeline(
 	cfg: MonitorConfig,
-	opts: { dryRun?: boolean | undefined; force?: boolean | undefined; limit?: number | undefined },
+	opts: { dryRun?: boolean | undefined; force?: boolean | undefined; limit?: number | undefined; scheduledAt?: number | undefined },
 	h: RunHandlers,
 	d: Deps = {},
 ): Promise<RunResult> {
@@ -892,9 +892,11 @@ export async function runPipeline(
 	}
 
 	// 投递成功后才记状态 —— 失败时这些帖子下次还会被处理，不会丢
+	// lastRun 记「本次定时触发时刻」而非完成时刻：cron 每小时整点触发，若记完成时刻
+	// （含抓取/AI/发信耗时），下一小时的触发会差几十秒不满 INTERVAL_MINUTES 而被跳过，实际变成每两小时一次。
 	const next: PipelineState = {
 		sent: [...state.sent, ...fresh.map((p) => p.postUrl)].slice(-STATE_MAX),
-		lastRun: new Date(nowMs()).toISOString(),
+		lastRun: new Date(opts.scheduledAt ?? nowMs()).toISOString(),
 	};
 	await h.saveState(next);
 	log(`状态已保存（累计 ${next.sent.length} 条已推送）`);

@@ -53,6 +53,17 @@ describe("dueSinceLastRun", () => {
 		const old: PipelineState = { sent: [], lastRun: new Date(now - 5 * 3600 * 1000).toISOString() };
 		expect(dueSinceLastRun(old, c, { nowMs: now }).due).toBe(true);
 	});
+
+	it("整点 cron + 60 分钟间隔：每次触发都应放行（不被上一次耗时挤掉）", () => {
+		const c = cfg({ intervalMinutes: 60 });
+		const base = Date.parse("2026-10-10T00:00:00Z");
+		// lastRun 记的是「定时触发时刻」，因此每个整点都恰好满 60 分钟。
+		for (let hour = 0; hour < 6; hour++) {
+			const state: PipelineState = { sent: [], lastRun: new Date(base + hour * 3600_000).toISOString() };
+			const due = dueSinceLastRun(state, c, { nowMs: base + (hour + 1) * 3600_000 });
+			expect(due.due).toBe(true);
+		}
+	});
 });
 
 describe("parsePosts", () => {
@@ -226,6 +237,19 @@ describe("runPipeline 状态守卫", () => {
 		expect(h.saved).toHaveLength(1);
 		expect(h.saved[0]?.sent).toContain("u1");
 		expect(h.saved[0]?.lastRun).toBeTruthy();
+	});
+
+	it("lastRun 记定时触发时刻，而不是完成时刻", async () => {
+		const h = handlers();
+		const scheduledAt = Date.parse("2026-10-10T00:00:00Z");
+		// nowMs 比触发时刻晚 40 秒，模拟一次运行的实际耗时。
+		await runPipeline(
+			cfg({ intervalMinutes: 60 }),
+			{ scheduledAt },
+			h,
+			{ ...feedFetch([{ postUrl: "u1" }]), nowMs: () => scheduledAt + 40_000 },
+		);
+		expect(h.saved[0]?.lastRun).toBe(new Date(scheduledAt).toISOString());
 	});
 
 	it("投递失败不保存状态", async () => {
